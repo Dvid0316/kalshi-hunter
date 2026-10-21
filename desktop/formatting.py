@@ -31,6 +31,7 @@ def cents(price) -> str:
     d = to_decimal(price)
     if d is None:
         return DASH
+    d = d.quantize(Decimal('0.000001'), rounding=ROUND_HALF_EVEN)     # strip binary-float noise (sub-micro-dollar)
     c = d * 100
     one = c.quantize(Decimal('0.1'), rounding=ROUND_HALF_EVEN)
     text = f'{one}' if one == c else f"{c.quantize(Decimal('0.01'), rounding=ROUND_HALF_EVEN)}"
