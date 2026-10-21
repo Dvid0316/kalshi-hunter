@@ -22,7 +22,7 @@ from kh.cohorts import forecast_rows, LABELS
 
 from . import index as market_index
 from . import paths
-from .formatting import (cents, spread_cents, percent, money, count, stamp, short_stamp, age_text, UNAVAILABLE, DASH)
+from .formatting import (cents, spread_cents, percent, money, count, stamp, short_stamp, clock, age_text, to_decimal, UNAVAILABLE, DASH)
 from .freshness import classify, quote_executable
 
 ROOT = paths.ROOT
@@ -215,7 +215,8 @@ class Repository:
         # A quote far older than the snapshot's newest scan means the market dropped out of later scans
         # (closed, delisted or filtered). Its price is history, not the snapshot's current view.
         dropped = bool(has_quote and asof and r['quote_ts'] < asof - 2 * 300)
-        return dict(ticker=r['ticker'], title=r['title'] or r['ticker'], subtitle=r['yes_sub'] or '', dropped=dropped,
+        sub = ' · '.join(x for x in (r['ticker'], r['category'] or 'Other', r['yes_sub'] or '') if x)
+        return dict(ticker=r['ticker'], title=r['title'] or r['ticker'], subtitle=r['yes_sub'] or '', subline=sub, dropped=dropped,
                     category=r['category'] or 'Other',
                     status=r['status'], result=r['result'],
                     bid=cents(r['yes_bid']) if has_quote else DASH, ask=cents(r['yes_ask']) if has_quote else DASH,
@@ -242,7 +243,8 @@ class Repository:
                 'SELECT ts,yes_bid,yes_ask,no_bid,no_ask,yes_bid_size,yes_ask_size,last,volume_24h,open_interest '
                 'FROM snapshots WHERE ticker=? ORDER BY ts DESC LIMIT 2000', (ticker,)).fetchall()))
             latest = raw[-1] if raw else None
-            points = [dict(t=r['ts'], bid=r['yes_bid'], ask=r['yes_ask'], no_bid=r['no_bid'], no_ask=r['no_ask'])
+            points = [dict(t=r['ts'], bid=r['yes_bid'], ask=r['yes_ask'], no_bid=r['no_bid'], no_ask=r['no_ask'],
+                           tl=clock(r['ts']), when=stamp(r['ts']), bid_size=r['yes_bid_size'], ask_size=r['yes_ask_size'])
                       for r in raw if r['yes_bid'] is not None and r['yes_ask'] is not None]
             if len(points) > 400:   # downsample for rendering, keep both endpoints
                 points = points[::max(1, len(points) // 399)][:399] + [points[-1]]
@@ -260,7 +262,8 @@ class Repository:
             for cohort in ('research', 'strategy'):
                 for r in forecast_rows(c, cohort):
                     if r['ticker'] == ticker:
-                        forecasts.append(self._forecast_card(r, cohort))
+                        fm = c.execute('SELECT yes_bid,yes_ask FROM forecast_market WHERE forecast_id=?', (r['id'],)).fetchone()
+                        forecasts.append(self._forecast_card(r, cohort, fm))
             quote = None
             if latest is not None:
                 fresh = classify(latest['ts'], now, 'archive')
@@ -293,9 +296,11 @@ class Repository:
                 freshness=(classify(latest['ts'], now, 'archive').label if latest is not None else 'NO DATA'))
 
     @staticmethod
-    def _forecast_card(r, cohort):
+    def _forecast_card(r, cohort, fm=None):
         mid, exec_p = r['mid_p'], r['exec_implied_p']
-        return dict(
+        bid = fm['yes_bid'] if fm is not None else None
+        ask = fm['yes_ask'] if fm is not None else None
+        return dict(market_bid=-1 if bid is None else bid, market_ask=-1 if ask is None else ask,
             id=r['id'], cohort=cohort, cohort_label=LABELS[cohort], ticker=r['ticker'], side=r['side'],
             prob_yes=r['prob_yes'], prob_lo=r['prob_lo'], prob_hi=r['prob_hi'],
             probability=percent(r['prob_yes']),
@@ -307,7 +312,7 @@ class Repository:
             mid_p=mid, exec_implied_p=exec_p,
             status='Open · paper' if r['outcome'] is None else 'Resolved · paper',
             outcome=r['outcome'], pnl_text=money(r['pnl']) if r['outcome'] is not None else UNAVAILABLE,
-            research_id=r['research_id'], note=r['note'] or '')
+            exec_price=r['exec_price'], research_id=r['research_id'], note=r['note'] or '')
 
     # ------------------------------------------------------------------ research & strategy cards
     def forecast_cards(self, cohort):
@@ -316,16 +321,45 @@ class Repository:
                 'SELECT ticker,title FROM markets WHERE ticker IN (SELECT ticker FROM forecasts)')}
             cards = []
             for r in forecast_rows(c, cohort):
-                card = self._forecast_card(r, cohort)
-                card['title'] = titles.get(r['ticker']) or r['ticker']
-                card['series'] = r['series'] or ''
                 fm = c.execute('SELECT yes_bid,yes_ask,edge_vs_mid,edge_vs_exec FROM forecast_market WHERE forecast_id=?',
                                (r['id'],)).fetchone()
+                card = self._forecast_card(r, cohort, fm)
+                card['title'] = titles.get(r['ticker']) or r['ticker']
+                card['series'] = r['series'] or ''
                 card['market_at_fill'] = (f"YES {cents(fm['yes_bid'])} / {cents(fm['yes_ask'])}" if fm else UNAVAILABLE)
                 card['edge_vs_mid'] = percent(fm['edge_vs_mid']) if fm and fm['edge_vs_mid'] is not None else UNAVAILABLE
                 card['edge_vs_exec'] = percent(fm['edge_vs_exec']) if fm and fm['edge_vs_exec'] is not None else UNAVAILABLE
                 cards.append(card)
             return cards
+
+    # ------------------------------------------------------------------ lookups used by the account views
+    def market_titles(self, tickers):
+        tickers = sorted({t for t in tickers if t})
+        if not tickers:
+            return {}
+        with db.readonly(self.path) as c:
+            out = {}
+            for i in range(0, len(tickers), 500):
+                chunk = tickers[i:i + 500]
+                out.update({r[0]: r[1] for r in c.execute(
+                    f"SELECT ticker,title FROM markets WHERE ticker IN ({','.join('?' * len(chunk))})", chunk)})
+            return out
+
+    def latest_quotes(self, tickers):
+        """Newest archived YES quote per ticker as exact Decimals: {ticker: {ts, yes_bid, yes_ask}}."""
+        tickers = sorted({t for t in tickers if t})
+        out = {}
+        if not tickers:
+            return out
+        with db.readonly(self.path) as c:
+            for t in tickers:
+                r = c.execute('SELECT ts,yes_bid,yes_ask FROM snapshots WHERE ticker=? ORDER BY ts DESC LIMIT 1', (t,)).fetchone()
+                if r:
+                    out[t] = dict(ts=r['ts'], yes_bid=to_decimal(r['yes_bid']), yes_ask=to_decimal(r['yes_ask']))
+        return out
+
+    def all_forecast_cards(self):
+        return self.forecast_cards('research') + self.forecast_cards('strategy')
 
     # ------------------------------------------------------------------ candidates / alerts
     def alerts(self):

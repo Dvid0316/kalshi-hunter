@@ -1,134 +1,163 @@
-"""Native offline shell with asynchronous, bounded snapshot reads."""
-import os,sys,argparse,json
+"""Kalshi Hunter desktop entry point (offline research + personal ledger).
+
+    ./launch.sh                    normal launch
+    ./launch.sh --sample-account   same, with clearly-labelled SAMPLE account data (never your real account)
+    ./launch.sh --diagnose         print environment/data checks and exit (no window)
+    ./launch.sh --smoke            headless: load every page, report QML warnings (used by the test suite)
+    ./launch.sh --interaction-test headless: click/type/shortcut through the UI
+    ./launch.sh --screenshots DIR  capture every page to DIR (add --size 1100x760 for compact layouts)
+
+Nothing here starts a scanner, contacts a network, reads credentials, or places orders.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import signal
+import sys
+import time
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
-from PySide6.QtCore import QObject, Signal, Slot, Property, QUrl, QTimer
-from PySide6.QtGui import QGuiApplication, QFont
-from PySide6.QtQml import QQmlApplicationEngine
-from PySide6.QtQuick import QQuickWindow
-from .repository import Repository, ROOT
 
-class Bridge(QObject):
-    changed=Signal()
-    finished=Signal(str,int,object)
-    def __init__(self):
-        super().__init__();self.repo=Repository();self.pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='snapshot')
-        self._state={'ready':False,'error':'','page':'Overview','marketRows':[],'detail':{},'overview':{},'search':'','offset':0,'more':False}
-        self.serial={};self.finished.connect(self.receive)
-    @Property('QVariantMap',notify=changed)
-    def state(self):return self._state
-    def request(self,kind,fn,*args):
-        n=self.serial.get(kind,0)+1;self.serial[kind]=n
-        f=self.pool.submit(fn,*args)
-        def done(f):
-            try: result=f.result()
-            except Exception as e: result={'error':str(e)}
-            self.finished.emit(kind,n,result)
-        f.add_done_callback(done)
-    @Slot(str,int,object)
-    def receive(self,kind,n,value):
-        if n!=self.serial.get(kind):return
-        if 'error' in value:self._state['error']=value['error']
-        elif kind=='overview':self._state.update(overview=value,ready=True)
-        elif kind=='markets':self._state.update(marketRows=value['rows'],more=value['more'],offset=value['offset'])
-        elif kind=='detail':self._state['detail']=value
-        self.changed.emit()
-    @Slot()
-    def load(self):
-        self.request('overview',self.repo.overview);self.request('markets',self.repo.markets)
-        self.request('detail',self.repo.detail,'CONTROLS-2026-D')
-    @Slot(str)
-    def navigate(self,page):
-        self._state['page']=page
-        if page=='Research':
-            cohort=self._state['overview'].get('cohorts',{}).get('research',{}).get('rows',[])
-            if cohort and self._state['detail'].get('ticker') not in [r['ticker'] for r in cohort]:
-                self.select(cohort[0]['ticker'])
-        self.changed.emit()
-    @Slot(str)
-    def search(self,text):
-        self._state['search']=text;self.request('markets',self.repo.markets,text,0)
-    @Slot(int)
-    def pageMarkets(self,delta):
-        self.request('markets',self.repo.markets,self._state['search'],max(0,self._state['offset']+50*delta))
-    @Slot(str)
-    def select(self,ticker):self.request('detail',self.repo.detail,ticker)
-    def close(self):self.pool.shutdown(wait=True,cancel_futures=True)
+from . import logging_setup, paths
+
+ROOT = paths.ROOT
+log = logging.getLogger('kh.app')
+EXIT_LOCKED = 3
+TEST_FLAGS = ('smoke', 'interaction_test', 'screenshots')
 
 
-def main(argv=None):
-    p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--capture-dir',type=Path)
-    p.add_argument('--smoke',action='store_true')
-    p.add_argument('--interaction-test',action='store_true')
-    p.add_argument('--compact',action='store_true')
-    args=p.parse_args(argv)
-    app=QGuiApplication(sys.argv[:1]);app.setApplicationName('Kalshi Hunter');app.setOrganizationName('Local Research')
-    app.setFont(QFont('Inter',10))
-    bridge=Bridge();engine=QQmlApplicationEngine();engine.rootContext().setContextProperty('backend',bridge)
-    errors=[]
-    engine.warnings.connect(lambda warnings: errors.extend(w.toString() for w in warnings))
-    engine.load(QUrl.fromLocalFile(str(ROOT/'desktop/qml/Main.qml')))
+def _parse(argv):
+    p = argparse.ArgumentParser(prog='kalshi-hunter', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('--smoke', action='store_true')
+    p.add_argument('--interaction-test', action='store_true', dest='interaction_test')
+    p.add_argument('--screenshots', '--capture-dir', type=Path, dest='screenshots')
+    p.add_argument('--compact', action='store_true', help='shortcut for --size 1100x760')
+    p.add_argument('--size', default=None, help='window size WxH, e.g. 1100x760')
+    p.add_argument('--sample-account', action='store_true')
+    p.add_argument('--diagnose', action='store_true')
+    p.add_argument('--no-lock', action='store_true')
+    return p.parse_args(argv)
+
+
+def diagnose() -> int:
+    """Human-readable health check. Exit 0 = everything the app needs is present."""
+    import sqlite3
+    info = logging_setup.environment_report()
+    problems = []
+    if not info.get('snapshot_exists'):
+        problems.append(f"research snapshot missing: {info['snapshot']}")
+    else:
+        try:
+            with sqlite3.connect(paths.snapshot_path().as_uri() + '?mode=ro&immutable=1', uri=True) as c:
+                info['snapshot_tables'] = c.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table'").fetchone()[0]
+                info['snapshot_markets'] = c.execute('SELECT COUNT(*) FROM markets').fetchone()[0]
+        except sqlite3.Error as exc:
+            problems.append(f'snapshot unreadable: {exc}')
+    info['account_db'] = str(paths.account_db_path())
+    info['account_db_exists'] = paths.account_db_path().exists()
+    info['display'] = dict(DISPLAY=os.environ.get('DISPLAY'), WAYLAND_DISPLAY=os.environ.get('WAYLAND_DISPLAY'),
+                           QT_QPA_PLATFORM=os.environ.get('QT_QPA_PLATFORM'))
+    try:
+        import PySide6.QtQuick  # noqa: F401
+    except ImportError as exc:
+        problems.append(f'PySide6 QtQuick missing: {exc}')
+    info['scanner_processes'] = 'none started by this app (it has no scanner)'
+    info['problems'] = problems
+    print(json.dumps(info, indent=2, default=str))
+    return 1 if problems else 0
+
+
+def main(argv=None) -> int:
+    args = _parse(argv)
+    logging_setup.setup()
+    if args.diagnose:
+        return diagnose()
+    if args.compact and not args.size:
+        args.size = '1100x760'
+    testing = any(getattr(args, f) for f in TEST_FLAGS)
+
+    os.environ.setdefault('QT_QUICK_CONTROLS_STYLE', 'Basic')       # we draw every control; avoid native-style warnings
+    from PySide6.QtCore import QLockFile, QTimer, QUrl
+    from PySide6.QtGui import QFont, QGuiApplication
+    from PySide6.QtQml import QQmlApplicationEngine
+    from PySide6.QtQuick import QQuickWindow  # noqa: F401  (registers the QQuickWindow wrapper so rootObjects() has grabWindow/contentItem)
+
+    from .account_service import AccountService
+    from .bridge import Bridge, PAGES
+    from .repository import Repository
+
+    app = QGuiApplication(sys.argv[:1])
+    app.setApplicationName('Kalshi Hunter')
+    app.setOrganizationName('Local Research')
+    app.setApplicationVersion('1.0.0')
+    app.setDesktopFileName('kalshi-hunter')
+    app.setFont(QFont(['Inter', 'Noto Sans', 'DejaVu Sans'], 10))
+    qt_messages = logging_setup.install_qt_handler()
+
+    lock = None
+    if not testing and not args.no_lock:
+        paths.var_dir().mkdir(parents=True, exist_ok=True)
+        lock = QLockFile(str(paths.var_dir() / 'kalshi-hunter.lock'))
+        lock.setStaleLockTime(0)
+        if not lock.tryLock(100):
+            print('Kalshi Hunter is already running (lock: var/kalshi-hunter.lock).', file=sys.stderr)
+            return EXIT_LOCKED
+
+    repo = Repository()
+    account = AccountService(repo, sample=args.sample_account)
+    try:
+        account.prepare()
+    except Exception as exc:                                # a broken sample must not stop the research views
+        log.error('sample account unavailable: %s', exc)
+    bridge = Bridge(repo, sample=args.sample_account, account_service=account)
+    engine = QQmlApplicationEngine()
+    ctx = engine.rootContext()
+    ctx.setContextProperty('backend', bridge)
+    ctx.setContextProperty('appVersion', app.applicationVersion())
+    errors: list[str] = []
+    engine.warnings.connect(lambda ws: errors.extend(w.toString() for w in ws))
+    engine.load(QUrl.fromLocalFile(str(ROOT / 'desktop/qml/Main.qml')))
     if not engine.rootObjects():
-        print(errors, file=sys.stderr);bridge.close();return 1
-    app.aboutToQuit.connect(bridge.close);QTimer.singleShot(0,bridge.load)
-    if args.compact:
-        engine.rootObjects()[0].resize(1100,760)
-    if args.interaction_test:
-        from PySide6.QtTest import QTest
-        from PySide6.QtCore import Qt, QPointF
-        def interact():
-            window=engine.rootObjects()[0]
-            def click_item(name):
-                def find(item):
-                    if item.objectName()==name:return item
-                    for child in item.childItems():
-                        result=find(child)
-                        if result is not None:return result
-                    return None
-                item=find(window.contentItem())
-                if item is None: raise AssertionError('Missing '+name)
-                pos=item.mapToScene(QPointF(item.width()/2,item.height()/2)).toPoint()
-                QTest.mouseClick(window,Qt.LeftButton,Qt.NoModifier,pos)
-                QTest.qWait(250)
-            try:
-                click_item('nav_Markets')
-                assert bridge.state['page']=='Markets'
-                click_item('market_search')
-                for ch in 'CONTROL': QTest.keyClick(window,ord(ch))
-                import time
-                for _ in range(150):
-                    time.sleep(.02);app.processEvents()
-                    if bridge.state['marketRows'] and all('CONTROL' in r['ticker'].upper() or 'CONTROL' in r['title'].upper() for r in bridge.state['marketRows']):break
-                assert bridge.state['search'].upper()=='CONTROL'
-                assert bridge.state['marketRows'] and all('CONTROL' in r['ticker'].upper() or 'CONTROL' in r['title'].upper() for r in bridge.state['marketRows'])
-                for page in ['Research','Strategy','Accuracy','Positions','Evidence','Overview']:
-                    click_item('nav_'+page)
-                    assert bridge.state['page']==page
-                assert not errors, errors
-                print(json.dumps({'interaction_test':'passed','qml_warnings':errors}))
-                app.exit(0)
-            except Exception as e:
-                import traceback;traceback.print_exc();app.exit(1)
-        QTimer.singleShot(1800,interact)
-    if args.capture_dir or args.smoke:
-        pages=iter(['Overview','Markets','Research','Strategy','Alerts','Positions','History','Accuracy','Evidence'])
-        current=[None];ticks=[0]
-        timer=QTimer();timer.setInterval(800)
-        def capture():
-            ticks[0]+=1
-            if ticks[0]>60:
-                print('Snapshot load timeout',file=sys.stderr);app.exit(2);return
-            if not bridge.state['ready'] or not bridge.state['detail']:return
-            if current[0] and args.capture_dir:
-                args.capture_dir.mkdir(parents=True,exist_ok=True)
-                engine.rootObjects()[0].grabWindow().save(str(args.capture_dir/(current[0].lower()+'.png')))
-            try:
-                current[0]=next(pages);bridge.navigate(current[0])
-            except StopIteration:
-                print(json.dumps({'ready':True,'pages':9,'qml_warnings':errors}))
-                app.exit(1 if errors else 0)
-        timer.timeout.connect(capture);timer.start()
-    return app.exec()
+        log.error('QML failed to load: %s', errors)
+        print('\n'.join(errors) or 'QML failed to load', file=sys.stderr)
+        bridge.close()
+        return 1
+    window = engine.rootObjects()[0]
+    if args.size:
+        try:
+            w, h = (int(x) for x in args.size.lower().split('x'))
+            window.resize(w, h)
+        except ValueError:
+            print(f'bad --size {args.size!r}; expected WxH', file=sys.stderr)
+            return 2
 
-if __name__=='__main__':sys.exit(main())
+    shutdown_started = []
+
+    def shutdown(*_):
+        if not shutdown_started:
+            shutdown_started.append(1)
+            log.info('shutdown requested')
+            app.quit()
+
+    app.aboutToQuit.connect(bridge.close)
+    app.aboutToQuit.connect(lambda: lock.unlock() if lock else None)
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, shutdown)
+    pump = QTimer()                                          # lets Python signal handlers run inside the Qt loop
+    pump.start(250)
+    pump.timeout.connect(lambda: None)
+    QTimer.singleShot(0, bridge.load)
+    log.info('started (sample=%s, testing=%s)', args.sample_account, testing)
+
+    if testing:
+        from . import selftest
+        selftest.install(app, window, bridge, errors, qt_messages, args, PAGES)
+    code = app.exec()
+    log.info('exited with code %s', code)
+    return code
+
+
+if __name__ == '__main__':
+    sys.exit(main())
