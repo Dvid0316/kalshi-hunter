@@ -1,0 +1,4 @@
+# Observed working host versions; local venv currently reuses host wheels.
+PySide6==6.11.2
+requests==2.34.2
+pytest==9.1.1

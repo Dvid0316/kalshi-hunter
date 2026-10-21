@@ -88,3 +88,25 @@ def connect(path=DEFAULT):
             c.execute(f"CREATE TRIGGER IF NOT EXISTS ro_{t}_{op.lower()} BEFORE {op} ON {t} "
                       f"BEGIN SELECT RAISE(ABORT, '{t} is append-only'); END")
     c.commit(); return c
+
+
+from contextlib import contextmanager
+
+
+@contextmanager
+def readonly(path):
+    """Open an existing database without schema changes or sidecar creation.
+
+    Only for the static offline snapshot; never a live WAL database.
+    """
+    from pathlib import Path
+    p = Path(path).resolve(strict=True)
+    if Path(str(p)+'-wal').exists():
+        raise ValueError('Offline snapshot must not have an active WAL')
+    c = sqlite3.connect(p.as_uri()+'?mode=ro&immutable=1', uri=True)
+    c.row_factory = sqlite3.Row
+    c.execute('PRAGMA query_only=ON')
+    try:
+        yield c
+    finally:
+        c.close()

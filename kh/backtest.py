@@ -116,7 +116,13 @@ def build_dataset(api, series_list, per_series=8, min_volume=200, path=DS, rules
 
 def load(path=DS, rule="sched24"):
     c = sqlite3.connect(path); c.row_factory = sqlite3.Row
-    return [dict(r) for r in c.execute("SELECT * FROM pit2 WHERE rule=? AND yes_bid>0 AND yes_ask<1 AND yes_ask>yes_bid ORDER BY pred_ts", (rule,))]
+    rows = [dict(r) for r in c.execute("SELECT * FROM pit2 WHERE rule=? AND yes_bid>0 AND yes_ask<1 AND yes_ask>yes_bid ORDER BY pred_ts", (rule,))]
+    for row in rows:
+        raw = c.execute("SELECT json FROM mk_raw WHERE ticker=?", (row['ticker'],)).fetchone()
+        settlement = json.loads(raw[0]).get('settlement_ts') if raw else None
+        row['label_available_ts'] = iso(settlement) if settlement else None
+    c.close()
+    return rows
 
 
 def leakage_violations(rows):
@@ -129,7 +135,7 @@ def split(rows, frac=0.6):
     OUTCOME was known after the first test prediction time (outcome-time purge)."""
     rows = sorted(rows, key=lambda r: r["pred_ts"]); k = int(len(rows) * frac)
     test = rows[k:]; t0 = test[0]["pred_ts"] if test else 9e12
-    train = [r for r in rows[:k] if r["close_ts"] < t0]
+    train = [r for r in rows[:k] if r.get("label_available_ts") is not None and r["label_available_ts"] < t0]
     return train, test
 
 

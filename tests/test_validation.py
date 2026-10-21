@@ -30,7 +30,7 @@ def test_hash_chain_detects_tampering():
 
 
 def _rows():
-    return [{"ticker": f"T{i}", "pred_ts": 1000 + i * 100, "close_ts": 1000 + i * 100 + 50, "f_ts": 1000 + i * 100 - 3601,
+    return [{"ticker": f"T{i}", "pred_ts": 1000 + i * 100, "close_ts": 1000 + i * 100 + 50, "label_available_ts": 1000 + i * 100 + 50, "f_ts": 1000 + i * 100 - 3601,
              "f_prev_ts": 1000 + i * 100 - 90000, "yes_bid": 0.04, "yes_ask": 0.06, "prev_mid": 0.2, "outcome": i % 2} for i in range(20)]
 
 

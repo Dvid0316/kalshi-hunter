@@ -46,7 +46,7 @@ def checkpoint(c, path=CHECKPOINT):
 
 def verify_checkpoints(c, path=CHECKPOINT):
     """Every recorded head must still be present in the chain at that seq."""
-    if not os.path.exists(path): return []
+    if not os.path.exists(path): return ["checkpoint file missing"]
     bad = []
     for ln in open(path):
         try: d = json.loads(ln)
@@ -59,8 +59,16 @@ def verify_checkpoints(c, path=CHECKPOINT):
 
 def verify(c):
     """Returns list of problems; empty = intact."""
-    _ensure(c); probs = []; prev = "GENESIS"
+    probs = []; prev = "GENESIS"
+    tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if 'hash_chain' not in tables: return ['hash_chain missing']
+    for t in TABLES:
+        if t not in tables: continue
+        n = c.execute(f"SELECT COUNT(*) FROM {t} WHERE id NOT IN (SELECT row_id FROM hash_chain WHERE tbl=?)", (t,)).fetchone()[0]
+        if n: probs.append(f"{t}: {n} unsealed rows")
     for s in c.execute("SELECT * FROM hash_chain ORDER BY seq").fetchall():
+        if s['tbl'] not in TABLES or s['tbl'] not in tables:
+            probs.append(f"invalid chain table at {s['seq']}"); continue
         r = c.execute(f"SELECT * FROM {s['tbl']} WHERE id=?", (s["row_id"],)).fetchone()
         if r is None: probs.append(f"{s['tbl']}#{s['row_id']} missing"); continue
         if row_hash(r) != s["content_hash"]: probs.append(f"{s['tbl']}#{s['row_id']} content changed")

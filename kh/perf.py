@@ -1,6 +1,8 @@
 import time, json
 from .fees import fee
 from . import quant
+from .accounting import settlement_pnl, amount
+from .cohorts import forecast_rows
 
 
 def record_forecast(api, c, ticker, side, prob_yes, lo, hi, research_id=None, qty=10, note=""):
@@ -47,27 +49,33 @@ def resolve(api, c):
         res = m.get("result")
         if res in ("yes", "no"):
             outcome = 1 if res == "yes" else 0
-            win = (outcome == 1) == (r["side"] == "yes")
-            pnl = r["qty"] * ((1.0 if win else 0.0) - r["exec_price"]) - r["fee"]
+            pnl = float(settlement_pnl(r["side"], r["qty"], r["exec_price"], r["fee"], outcome))
             c.execute("INSERT INTO resolutions(ts,forecast_id,outcome,pnl) VALUES(?,?,?,?)",
                       (time.time(), r["id"], outcome, pnl)); n += 1
     c.commit(); return n
 
 
-def stats(c):
-    rows = c.execute("SELECT f.*, z.outcome AS outcome, z.pnl AS pnl FROM forecasts f JOIN resolutions z ON z.forecast_id=f.id").fetchall()
-    total = c.execute("SELECT COUNT(*) FROM forecasts").fetchone()[0]
-    out = {"forecasts_total": total, "open": total - len(rows), "resolved": len(rows),
-           "note": f"n={len(rows)} resolved forecasts: far too small to conclude anything about calibration or edge"}
-    if rows:
-        out["brier"] = sum(quant.brier(r["prob_yes"], r["outcome"]) for r in rows) / len(rows)
-        # market benchmark: implied YES prob at fill time
-        mk = [(r["exec_price"] if r["side"] == "yes" else 1 - r["exec_price"]) for r in rows]
-        out["brier_market"] = sum(quant.brier(p, r["outcome"]) for p, r in zip(mk, rows)) / len(rows)
-        out["net_pnl"] = sum(r["pnl"] for r in rows)
-        bins = {}
-        for r in rows:
-            b = min(9, int(r["prob_yes"] * 10)); bins.setdefault(b, []).append(r["outcome"])
-        out["calibration"] = {f"{b/10:.1f}-{(b+1)/10:.1f}": (len(v), sum(v) / len(v)) for b, v in sorted(bins.items())}
-    out["mean_slippage"] = c.execute("SELECT AVG(diff) FROM slippage").fetchone()[0]
+def stats(c, cohort="research"):
+    """One cohort only. Reconcile stored settlement against accounting inputs."""
+    from . import calibration as cal
+    rows = forecast_rows(c, cohort)
+    done = [r for r in rows if r['outcome'] is not None]
+    discrepancies = []
+    pnl = []
+    for r in done:
+        expected = settlement_pnl(r['side'], r['qty'], r['exec_price'], r['fee'], r['outcome'])
+        if r['pnl'] is None or abs(amount(r['pnl']) - expected) > amount('0.00000001'):
+            discrepancies.append(r['id'])
+        pnl.append(expected)
+    sl = [r['exec_price']-r['est_price'] for r in rows if r['est_price'] is not None]
+    paired = [r for r in done if r['mid_p'] is not None]
+    out = dict(cohort=cohort, forecasts_total=len(rows), open=len(rows)-len(done), resolved=len(done),
+               net_pnl=float(sum(pnl)) if done and not discrepancies else None,
+               accounting_discrepancies=discrepancies,
+               brier=cal.brier([r['prob_yes'] for r in done], [r['outcome'] for r in done]),
+               brier_market=cal.brier([r['mid_p'] for r in paired], [r['outcome'] for r in paired]),
+               brier_paired=cal.brier([r['prob_yes'] for r in paired], [r['outcome'] for r in paired]),
+               n_brier=len(done), n_brier_paired=len(paired),
+               mean_slippage=sum(sl)/len(sl) if sl else None,
+               note=f"n={len(done)} resolved; too small to claim an advantage. Paper only.")
     return out

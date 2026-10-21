@@ -114,7 +114,7 @@ def submit(api, c, sub, queue_id=None, usage=None, fetch=None):
                "ts": time.strftime("%F %T %Z"), "prob": [sub["prob_lo"], sub["prob_yes"], sub["prob_hi"]],
                "ev_after_fees": round(ev, 4), "ev_worst": round(evw, 4), "depth_at_ask": depth, "sources": sub["sources"],
                "secondhand": sub.get("secondhand", []), "contrarian": sub["contrarian"], "auditor_notes": notes,
-               "rules": m.get("rules_primary")}
+               "rules": m.get("rules_primary"), "rules_secondary": m.get("rules_secondary") or ""}
     if approved:
         c.execute("""INSERT INTO alerts(ts,ticker,side,research_id,forecast_id,exec_price,ev,ev_worst,payload,approved_by_auditor)
             VALUES(?,?,?,?,?,?,?,?,?,1)""", (time.time(), sub["ticker"], sub["side"], rid, fid, avg, ev, evw, json.dumps(payload)))
@@ -124,16 +124,57 @@ def submit(api, c, sub, queue_id=None, usage=None, fetch=None):
     return {"status": "approved" if approved else "no_edge", "research_id": rid, "forecast_id": fid, "payload": payload}
 
 
-def pending_alerts(api, c, max_drift=0.02):
-    """Unalerted approved alerts, re-verified against the live book right before the routine posts them."""
-    from . import quant
+def pending_alerts(api, c, max_drift=0.02, now=None, ttl=900):
+    """Pure recheck: no mutation of original approval evidence. Fail closed.
+
+    Network failures suppress this delivery attempt; they do not rewrite history.
+    """
+    from . import quant, scanner
+    import math
+    now = time.time() if now is None else now
     out = []
     for a in c.execute("SELECT * FROM alerts WHERE approved_by_auditor=1 AND alerted_at IS NULL").fetchall():
-        avg, got = quant.executable_buy(api.orderbook(a["ticker"], 20), a["side"], 10)
-        if avg is None or avg - a["exec_price"] > max_drift:
-            c.execute("UPDATE alerts SET approved_by_auditor=0 WHERE id=?", (a["id"],)); continue
-        p = json.loads(a["payload"]); p["reverified_price"] = round(avg, 4); p["alert_id"] = a["id"]; out.append(p)
-    c.commit(); return out
+        try:
+            if not a['ts'] or not 0 <= now-a['ts'] <= ttl: continue
+            p = json.loads(a['payload'])
+            lo, prob, hi = p['prob']
+            if not all(math.isfinite(x) for x in (lo, prob, hi)) or not 0 < lo <= prob <= hi < 1: continue
+            if a['side'] not in ('yes','no'): continue
+            m = api.market(a['ticker'])
+            from datetime import datetime
+            close = datetime.fromisoformat(m['close_time'].replace('Z','+00:00')) if m.get('close_time') else None
+            h = (close.timestamp()-now)/3600 if close is not None and close.tzinfo is not None else None
+            if m.get('status') != 'active' or h is None or h < 1: continue
+            rules = (m.get('rules_primary') or '') + ' ' + (m.get('rules_secondary') or '')
+            if not m.get('rules_primary') or auditor.AMBIG.search(rules): continue
+            if p.get('rules') != m.get('rules_primary'): continue
+            if 'rules_secondary' not in p or p['rules_secondary'] != (m.get('rules_secondary') or ''): continue
+            fetched = time.monotonic()
+            ob = api.orderbook(a['ticker'], 20)
+            if time.monotonic()-fetched > 5: continue
+            avg, got = quant.executable_buy(ob, a['side'], 10)
+            top = quant.top_of_book(ob)
+            if avg is None or not math.isfinite(avg) or not 0 < avg < 1 or got < 10: continue
+            if top[a['side']+'_ask_size'] < 10: continue
+            if avg-a['exec_price'] > max_drift: continue
+            series = c.execute('SELECT e.series_ticker FROM markets m JOIN events e USING(event_ticker) WHERE m.ticker=?', (a['ticker'],)).fetchone()
+            info = scanner.series_info(c)
+            if not series or series[0] not in info: continue
+            policy = info[series[0]]
+            age = c.execute("SELECT v FROM kv WHERE k='series_ts'").fetchone()
+            if not age or not 0 <= now-float(age[0]) <= 6*3600: continue
+            if policy.get('type') not in ('fee_free','free') and policy.get('m') is None: continue
+            mult = scanner.fee_mult(info, series[0])
+            if not math.isfinite(mult) or mult < 0: continue
+            cost = fee(avg, got, mult)/got
+            evw = (lo if a['side']=='yes' else 1-hi)-avg-cost
+            if evw < ALERT_MIN_WORST_EV: continue
+            out.append(dict(p, alert_id=a['id'], reverified_price=avg,
+                            ev_worst=evw, ev_after_fees=(prob if a['side']=='yes' else 1-prob)-avg-cost,
+                            depth_at_ask=top[a['side']+'_ask_size'], reverified_at=now))
+        except (ValueError, TypeError, KeyError, RuntimeError, requests.RequestException):
+            continue
+    return out
 
 
 def mark_alerted(c, alert_id):

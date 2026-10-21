@@ -68,7 +68,7 @@ def test_db_persistence_and_perf():
     db.upsert_candidate(c, "k", "key", "EV", 0.1, {"a": 1}, {}, "screened")
     db.upsert_candidate(c, "k", "key", "EV", 0.2, {"a": 2}, {}, "alert")
     c.execute("""INSERT INTO forecasts(ts,ticker,side,prob_yes,prob_lo,prob_hi,est_price,exec_price,exec_ts,qty,fee,ev,
-                 resolved,outcome,pnl) VALUES(1,'X','yes',0.8,0.7,0.9,0.5,0.5,1,10,0.18,0.28,1,1,4.82)""")
+                 resolved,outcome,pnl,note) VALUES(1,'X','yes',0.8,0.7,0.9,0.5,0.5,1,10,0.18,0.28,1,1,4.82,'demo')""")
     c.commit(); c.close()
     c = db.connect(p)  # reopen = survives restart
     r = c.execute("SELECT * FROM candidates ORDER BY id").fetchall()   # append-only: changed edge -> new row, old kept
@@ -77,7 +77,7 @@ def test_db_persistence_and_perf():
     assert s["resolved"] == 0 and s["forecasts_total"] == 1
     c.execute("INSERT INTO resolutions(ts,forecast_id,outcome,pnl) VALUES(2,1,1,4.82)"); c.commit()
     s = perf.stats(c)
-    assert s["resolved"] == 1 and abs(s["brier"] - 0.04) < 1e-9 and abs(s["brier_market"] - 0.25) < 1e-9 and "too small" in s["note"]
+    assert s["resolved"] == 1 and abs(s["brier"] - 0.04) < 1e-9 and s["brier_market"] is None and "too small" in s["note"]
 
 
 def test_api_refuses_non_public_paths():
