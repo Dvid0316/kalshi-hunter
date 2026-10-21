@@ -1,0 +1,2 @@
+# Development-only dependencies. Not needed to run the application.
+pytest==9.1.1

@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Kalshi Hunter
+GenericName=Prediction-market research
+Comment=Offline Kalshi research viewer and personal trading ledger (read-only; no trading capability)
+Exec=/home/dave/kalshi-hunter-dev/workspace/launch.sh
+Path=/home/dave/kalshi-hunter-dev/workspace
+Icon=kalshi-hunter
+Terminal=false
+StartupNotify=true
+StartupWMClass=kalshi-hunter
+Categories=Office;Finance;
+Keywords=kalshi;prediction;markets;research;forecast;ledger;journal;

@@ -1,5 +1,21 @@
 # SETUP: Kalshi Hunter (research and paper trading only, no real orders)
-Requirements: Linux, Python 3.13 (tested on 3.13.5), outbound HTTPS to api.elections.kalshi.com. No credentials are needed or used.
+
+> ## STOP — read this first
+> **This file describes the LEGACY cloud scanner (the backend that produced the snapshots), not the desktop
+> application on this machine.**
+>
+> - **Do not run `start.sh`, `supervise.sh` or `run.py` here.** They scan Kalshi over the network and `start.sh`
+>   would leave a scanner + supervisor running in the background — a duplicate of Grok's cloud jobs, which is
+>   explicitly forbidden on this box.
+> - **To set up and use the desktop app** (the thing you actually launch):
+>   `./setup.sh` to check the environment, then `./launch.sh` to start it. See `docs/ARCHITECTURE.md`,
+>   `docs/TROUBLESHOOTING.md` and `CONTINUATION.md`.
+> - The desktop app never connects to the network, holds no credentials and cannot place orders. It reads
+>   `data/` and `research/` read-only and writes only under `var/`.
+>
+> The commands below are kept for reference because they document how the preserved snapshots were produced.
+
+Requirements: Linux, Python 3.13 (tested on 3.13.5), outbound HTTPS to api.elections.kalshi.com. No credentials are needed or used. _(Legacy cloud scanner — not the desktop app.)_
 
 ```bash
 tar xzf kalshi-hunter-handoff-2026-10-21.tar.gz && cd kalshi-hunter-handoff-2026-10-21

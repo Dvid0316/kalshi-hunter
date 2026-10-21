@@ -1,4 +1,4 @@
-# Observed working host versions; local venv currently reuses host wheels.
+# Runtime dependencies for the Kalshi Hunter desktop application.
+# The app is offline at run time: it never opens a network connection, so no HTTP client is listed here.
+# (The cloud scanner's own dependencies live in requirements.txt and are not used by this desktop app.)
 PySide6==6.11.2
-requests==2.34.2
-pytest==9.1.1

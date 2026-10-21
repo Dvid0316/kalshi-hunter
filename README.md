@@ -1,4 +1,16 @@
 # Kalshi Hunter: research and paper trading only
+
+> ## STOP — read this first
+> **This README describes the LEGACY cloud system** (the scanner that produced the snapshots), not the desktop
+> application on this machine. **Do not run `start.sh` or `run.py` here** — they scan over the network and
+> `start.sh` leaves a scanner + supervisor running, duplicating Grok's cloud jobs, which is forbidden on this box.
+>
+> **Desktop application** (what you launch): `./setup.sh` then `./launch.sh`. Docs: `docs/ARCHITECTURE.md`,
+> `docs/TROUBLESHOOTING.md`, `docs/KNOWN_LIMITATIONS.md`, `CONTINUATION.md`. It is read-only, offline, holds no
+> credentials and cannot place orders.
+>
+> The legacy text below is kept because it documents how the preserved evidence was produced.
+
 There's no order code, no keys and no auth. `kh/api.py` asserts that only public GET paths are used, and a test checks this.
 
 Ops (for the 30-minute routine):
