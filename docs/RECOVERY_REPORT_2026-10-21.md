@@ -68,7 +68,7 @@ numbers; and the per-process salted cache filename. Its leftover risks are recor
 
 ## 5. State after recovery
 
-- **393 tests pass** (94 s), including 28 new regression tests written for the confirmed defects above.
+- **394 tests pass** (94 s), including 28 new regression tests written for the confirmed defects above.
 - Evidence hash unchanged. No scanner running; no network access; no credentials anywhere.
 - Committed as `4acf573`.
 

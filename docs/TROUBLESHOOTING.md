@@ -91,7 +91,7 @@ usable size is 1100×760 (tested). `--compact` forces that size. Text contrast m
 ```bash
 ./launch.sh --smoke                        # every page, must print {"qml_warnings": [], "ui_errors": {}, "problems": []}
 ./launch.sh --interaction-test             # drives search, sort, paging, keyboard, journal
-./setup.sh --tests                         # 393 tests, includes zero-network and evidence-hash checks
+./setup.sh --tests                         # 394 tests, includes zero-network and evidence-hash checks
 find data research strategies -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum
 # expected: 20bb34ab867b21d6cb5f76face37915eb12225873143ea720acf0fa0c59ae6e5
 ```

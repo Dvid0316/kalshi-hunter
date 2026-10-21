@@ -6,7 +6,7 @@ that can be done locally without your approval.**_
 ## Where we are
 
 - Branch `hunter/complete-app`, repo `/home/dave/kalshi-hunter-dev/workspace`.
-- **393 tests pass** (`./setup.sh --tests`, ~95 s): unit, hand-computed ledger scenarios, a Fraction oracle,
+- **394 tests pass** (`./setup.sh --tests`, ~95 s): unit, hand-computed ledger scenarios, a Fraction oracle,
   static QML + WCAG contrast, runtime subprocess launches, accessibility audit, zero-network proof.
 - Evidence hash unchanged: `20bb34ab867b21d6cb5f76face37915eb12225873143ea720acf0fa0c59ae6e5`.
 - Verified on real KDE Wayland (`QT_QPA_PLATFORM=wayland`, 10 pages, zero QML warnings) and headless offscreen.

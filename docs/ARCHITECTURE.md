@@ -70,7 +70,7 @@ The personal ledger runs beside that stack and never mixes with it:
 | `kh/ledger/*` | models, append-only store, P&L engine, importers, comparison, sample fixtures |
 | `kh/cohorts.py`, `kh/perf.py`, `kh/accounting.py`, `kh/fees.py` | cohort separation and paper-result arithmetic |
 | `desktop/qml/` | theme, components, pages, shell |
-| `tests/` | 393 tests: unit, oracle/fuzz, static QML + WCAG, runtime subprocess, evidence hash |
+| `tests/` | 394 tests: unit, oracle/fuzz, static QML + WCAG, runtime subprocess, evidence hash |
 
 ## Threading and lifecycle
 
