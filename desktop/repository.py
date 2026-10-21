@@ -8,6 +8,7 @@ and ``detail(ticker)`` still return every key they used to; new keys are additiv
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -17,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from kh import db, perf, integrity, calibration
-from kh.accounting import amount
+from kh.accounting import amount, settlement_pnl
 from kh.cohorts import forecast_rows, LABELS
 
 from . import index as market_index
@@ -64,6 +65,19 @@ def _json_list(text):
         return []
 
 
+def _card_pnl(r):
+    """Stored paper P&L, shown only if it reconciles with the settlement arithmetic (same rule as the Overview)."""
+    if r['outcome'] is None:
+        return UNAVAILABLE
+    try:
+        expected = settlement_pnl(r['side'], r['qty'], r['exec_price'], r['fee'], r['outcome'])
+        if r['pnl'] is None or abs(amount(r['pnl']) - expected) > amount('0.00000001'):
+            return 'Mismatch'
+    except (ValueError, ArithmeticError):
+        return 'Mismatch'
+    return money(r['pnl'])
+
+
 class Repository:
     def __init__(self, path=None, clock=time.time, cache=None):
         self.path = Path(path or paths.snapshot_path())
@@ -81,7 +95,7 @@ class Repository:
         """Build/refresh the derived market index (cache only; evidence untouched)."""
         if self.path.resolve() != paths.snapshot_path().resolve() and self.cache == market_index.cache_path():
             # A different snapshot must never share the default cache file.
-            self.cache = paths.cache_dir() / f'market_index_{abs(hash(str(self.path.resolve()))) % 10**8}.db'
+            self.cache = paths.cache_dir() / f'market_index_{hashlib.sha1(str(self.path.resolve()).encode()).hexdigest()[:10]}.db'
         info = market_index.ensure(self.path, self.cache)
         self._use_cache = info['state'] in ('ready', 'built')
         return info
@@ -156,7 +170,8 @@ class Repository:
 
     def markets(self, search='', offset=0, *, sort=None, desc=None, status='any', category='any',
                 quotes_only=False, scope=None):
-        terms = [t for t in (search or '').split() if t]
+        search = str(search or '')[:200]                      # a pasted wall of text must not starve the worker pool
+        terms = [t for t in search.split() if t][:8]
         filtered = bool(terms) or status != 'any' or category not in ('any', '', None) or bool(quotes_only)
         scope = scope or ('all' if filtered else 'watchlist')
         if scope not in ('all', 'watchlist'):
@@ -169,7 +184,10 @@ class Repository:
             raise ValueError(f'unknown sort {sort!r}')
         column, default_desc = SORT_COLUMNS[sort]
         descending = default_desc if desc is None else bool(desc)
-        offset = max(0, int(offset))
+        try:
+            offset = min(max(0, int(offset)), 10**9)
+        except (TypeError, ValueError, OverflowError):
+            offset = 0
         where, args = [], []
         for t in terms:
             like = '%' + t.translate(_LIKE_ESCAPE) + '%'
@@ -188,10 +206,12 @@ class Repository:
         if quotes_only:
             where.append('mi.two_sided=1')
         clause = ('WHERE ' + ' AND '.join(where)) if where else ''
-        order = (f"(mi.{column} IS NULL OR mi.{column}=''), mi.{column} {'DESC' if descending else 'ASC'}, mi.ticker ASC")
+        key = f'ROUND(mi.{column}, 6)' if column == 'spread' else f'mi.{column}'   # float noise must not beat the ticker tie-break
+        order = (f"(mi.{column} IS NULL OR mi.{column}=''), {key} {'DESC' if descending else 'ASC'}, mi.ticker ASC")
         now = self.clock()
         with self._index_conn() as (c, rel):
             total = c.execute(f'SELECT COUNT(*) FROM {rel} mi {clause}', args).fetchone()[0]
+            offset = (total - 1) // PAGE_SIZE * PAGE_SIZE if total and offset >= total else (0 if not total else offset)   # never past the last page
             rows = c.execute(f'SELECT mi.* FROM {rel} mi {clause} ORDER BY {order} LIMIT {PAGE_SIZE + 1} OFFSET ?',
                              args + [offset]).fetchall()
         asof = self._asof()
@@ -310,8 +330,8 @@ class Repository:
             mid=percent(mid) if mid is not None else UNAVAILABLE,
             exec_implied=percent(exec_p) if exec_p is not None else UNAVAILABLE,
             mid_p=mid, exec_implied_p=exec_p,
-            status='Open · paper' if r['outcome'] is None else 'Resolved · paper',
-            outcome=r['outcome'], pnl_text=money(r['pnl']) if r['outcome'] is not None else UNAVAILABLE,
+            status=('Open · paper' if r['outcome'] is None else 'Resolved · paper') + (' · demo run' if (r['note'] or '') == 'demo' else ''),
+            outcome=r['outcome'], pnl_text=_card_pnl(r),
             exec_price=r['exec_price'], research_id=r['research_id'], note=r['note'] or '')
 
     # ------------------------------------------------------------------ research & strategy cards

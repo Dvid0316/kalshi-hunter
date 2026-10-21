@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from decimal import Decimal
 from pathlib import Path
 
@@ -88,6 +89,8 @@ class AccountService:
         store = self._open()
         try:
             rep = self._report(store)
+            counts = store.counts() if store else {}
+            sub_cent = self._sub_cent(store) if store else 0
         finally:
             if store:
                 store.close()
@@ -102,7 +105,7 @@ class AccountService:
             hay = f'{m.ticker} {titles.get(m.ticker, "")}'.lower()
             return all(t in hay for t in q)
 
-        summary = self._summary(rep)
+        summary = self._summary(rep, counts, sub_cent)
         if tab == 'open':
             src = [m for m in rep.open_positions if match(m)]
             rows = [self._open_row(m, titles, researched, refs, now) for m in src]
@@ -120,14 +123,32 @@ class AccountService:
                     page=int(offset) // PAGE + 1, sort=sort, desc=bool(desc), summary=summary,
                     flags=[f.message for f in rep.flags], empty=not rep.markets)
 
-    def _summary(self, rep):
+    @staticmethod
+    def _sub_cent(store) -> int:
+        """Fills priced below 1 cent: almost always a dollars-vs-cents import mistake (100x too small)."""
+        return store.c.execute("SELECT COUNT(*) FROM fills WHERE CAST(price AS REAL) < 0.01").fetchone()[0]
+
+    def _summary(self, rep, counts=None, sub_cent=0):
         none = not rep.markets
         realized = rep.realized_total
         excluded = rep.n_incomplete
+        flagged = sum(1 for m in rep.markets.values() if m.flags and not m.incomplete)
+        quarantined = (counts or {}).get('conflicts', 0) + (counts or {}).get('rejects', 0)
+        parts = []
+        if excluded:
+            parts.append(f'{excluded} market(s) excluded: incomplete or inconsistent history')
+        if flagged:
+            parts.append(f'{flagged} market(s) flagged for review')
+        if quarantined:
+            parts.append(f'{quarantined} quarantined or rejected record(s)')
+        if sub_cent:
+            parts.append(f'{sub_cent} fill(s) priced below 1¢: check the import unit')
+        if any(f.severity in ('warn', 'error') for f in rep.flags):
+            parts.append('possible duplicate records')
+        note = 'No trades imported' if none else ('; '.join(parts) + ' (see Data quality)' if parts else 'All markets verified')
         return dict(
             realized=money(realized, plus=True) if realized is not None else UNAVAILABLE,
-            realized_note=('No trades imported' if none else
-                           (f'{excluded} market(s) excluded: incomplete history' if excluded else 'All markets verified')),
+            realized_note=note,
             fees=money(rep.fees_total) if rep.fees_total is not None else UNAVAILABLE,
             open_cost=money(rep.open_cost_basis) if rep.open_cost_basis is not None else UNAVAILABLE,
             open_count=len(rep.open_positions),
@@ -163,13 +184,14 @@ class AccountService:
         end = m.settled_ts or m.last_ts
         result = (m.result or '').upper() if m.status == 'settled' else ''
         outcome = ('INCOMPLETE' if m.incomplete else ('WON' if m.realized and m.realized > 0 else ('LOST' if m.realized and m.realized < 0 else 'FLAT')))
-        bad = m.incomplete           # an incomplete history makes entry/exit averages untrustworthy: show nothing, not a guess
-        return dict(ticker=m.ticker, title=titles.get(m.ticker, ''), status='INCOMPLETE' if bad else m.status.upper(), result=result,
-                    outcome=outcome, qty=quantity(m.opened_qty) if not bad else DASH,
+        mixed = len(m.sides) > 1     # traded on both YES and NO: one average would blend two different prices
+        bad = m.incomplete or mixed  # an incomplete or two-sided history makes entry/exit averages untrustworthy: show nothing, not a guess
+        return dict(ticker=m.ticker, title=titles.get(m.ticker, ''), status='INCOMPLETE' if m.incomplete else m.status.upper(), result=result,
+                    outcome=outcome, qty=quantity(m.opened_qty) if not m.incomplete else DASH,
                     avg_entry=cents(m.avg_entry_price) if not bad else DASH, avg_exit=cents(m.avg_exit_price) if not bad else DASH,
                     fees=money(m.fees), realized=money(m.realized, plus=True) if m.realized is not None else UNAVAILABLE,
                     opened=short_stamp(m.first_ts), closed=short_stamp(end), researched=m.ticker in researched,
-                    incomplete=m.incomplete, flags=self._flags(m),
+                    incomplete=m.incomplete, flags=self._flags(m) + (['Traded on both YES and NO: entry/exit averages are not shown because they would blend the two sides.'] if mixed and not m.incomplete else []),
                     record_pnl=money(m.record_pnl, plus=True) if m.record_pnl is not None else '',
                     k=dict(ticker=m.ticker, qty=m.opened_qty, avg_entry=m.avg_entry_price, avg_exit=m.avg_exit_price, fees=m.fees,
                            realized=m.realized, closed_ts=end, opened=m.first_ts))
@@ -179,6 +201,8 @@ class AccountService:
         store = self._open()
         try:
             fills = store.fills() if store else []
+            all_fills = store.fills(include_voided=True) if store else []
+            void_ids = store.voided('fills') if store else set()
             settles = store.settlements() if store else []
             cash = store.cash() if store else []
             rep = E.compute(fills, settles, cash)
@@ -188,13 +212,14 @@ class AccountService:
         q = (search or '').lower().split()
         rows = []
         if kind == 'transactions':
-            for f in fills:
+            for f in all_fills:
+                voided = f.fill_id in void_ids
                 gross = f.count * f.price
                 effect = (-gross if f.action == 'buy' else gross) - f.fee
-                rows.append(dict(type='Fill', ts=f.ts, when=stamp(f.ts), ticker=f.ticker,
-                                 description=f'{f.action.capitalize()} {quantity(f.count)} {f.side.upper()} @ {cents(f.price)}',
-                                 cash=money(effect, plus=True), fee=money(f.fee), source=f.source, ref=f.fill_id,
-                                 k=dict(ts=f.ts, ticker=f.ticker, cash=effect, fee=f.fee, type='Fill')))
+                rows.append(dict(type='Fill (voided)' if voided else 'Fill', ts=f.ts, when=stamp(f.ts), ticker=f.ticker,
+                                 description=('VOIDED · not counted · ' if voided else '') + f'{f.action.capitalize()} {quantity(f.count)} {f.side.upper()} @ {cents(f.price)}',
+                                 cash=DASH if voided else money(effect, plus=True), fee=DASH if voided else money(f.fee), source=f.source, ref=f.fill_id,
+                                 k=dict(ts=f.ts, ticker=f.ticker, cash=Decimal(0) if voided else effect, fee=Decimal(0) if voided else f.fee, type='Fill')))
             for s in settles:
                 effect = s.revenue - s.fee
                 rows.append(dict(type='Settlement', ts=s.settled_ts, when=stamp(s.settled_ts), ticker=s.ticker,
@@ -223,7 +248,7 @@ class AccountService:
         desc = default[1] if desc is None else desc
         page, total = _sort_page(rows, sort, desc, max(0, int(offset)))
         return dict(kind=kind, rows=_clean(page), total=total, offset=offset, pages=max(1, -(-total // PAGE)),
-                    page=int(offset) // PAGE + 1, sort=sort, desc=bool(desc), empty=not (fills or settles or cash))
+                    page=int(offset) // PAGE + 1, sort=sort, desc=bool(desc), empty=not (all_fills or settles or cash))
 
     # ------------------------------------------------------------------ data quality
     def data_quality(self):
@@ -240,9 +265,12 @@ class AccountService:
             batches = [dict(when=stamp(b['ts']), kind=b['kind'], source=b['source'], label=b['label'] or '', total=b['n_total'], new=b['n_new'],
                             dup=b['n_dup'], conflict=b['n_conflict'], rejected=b['n_rejected']) for b in store.batches()[:20]]
             counts = store.counts()
+            n_sub = self._sub_cent(store)
         finally:
             if store:
                 store.close()
+        if n_sub:
+            items.append(dict(level='warn', message=f'{n_sub} fill(s) are priced below 1¢. If the file was in dollars but imported as cents, those prices are 100x too small: void them and re-import with the right unit.'))
         for c in conflicts:
             items.append(dict(level='error', message=f'Conflicting duplicate of {c["table"]} record {c["record"]}: kept the original, ignored the new copy.'))
         return dict(items=items, conflicts=conflicts, rejects=rejects, batches=batches, counts=counts,
@@ -263,7 +291,8 @@ class AccountService:
 
     def record_fill(self, ticker, side, action, count, price_cents, fee, when=None):
         """Record a trade the owner already executed elsewhere. This NEVER places an order."""
-        raw = dict(ticker=ticker, side=side, action=action, count=count, price=price_cents, fee=fee or '0',
+        # A unique id per manual entry: two genuine identical trades in the same minute must both be recorded.
+        raw = dict(fill_id='man:' + uuid.uuid4().hex, ticker=ticker, side=side, action=action, count=count, price=price_cents, fee=fee or '0',
                    ts=when or time.time(), note='manual entry')
         fill = M.make_fill(raw, price_unit='cents', source='manual')
         store = self._writer()

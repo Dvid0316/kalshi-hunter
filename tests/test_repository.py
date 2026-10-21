@@ -139,12 +139,19 @@ def test_detail_quote_sizes_follow_binary_duality(repo):
     assert [p['t'] for p in d['points']] == sorted(p['t'] for p in d['points'])
 
 
+def s0_demo_is_labelled(repo, ticker):
+    """True if any forecast card for this ticker is marked as a demo run."""
+    return any(c['status'].endswith('· demo run') for c in repo.forecast_cards('strategy') if c['ticker'] == ticker)
+
+
 def test_detail_links_research_forecasts_and_correction(repo):
     d = repo.detail('CONTROLS-2026-D')
     assert [r['id'] for r in d['research']] == [1, 4] and d['research'][1]['is_correction'] and d['research'][1]['corrects'] == 1
     assert d['research'][0]['source_list'] and all(s.startswith('http') for s in d['research'][0]['source_list'])
     f = d['forecasts'][0]
-    assert f['cohort'] == 'research' and f['side'] == 'no' and f['status'] == 'Open · paper' and f['pnl_text'] == 'Unavailable'
+    assert f['cohort'] == 'research' and f['side'] == 'no' and f['pnl_text'] == 'Unavailable'
+    assert f['status'] == 'Open · paper · demo run', 'forecast 1 is a demo entry and must be labelled as such everywhere'
+    assert s0_demo_is_labelled(repo, 'KXTRUMPAPPROVE-26OCT22-U37.9') is False, 'real research must not carry the demo marker'
     s = repo.detail('KXTRUMPAPPROVE-26OCT22-U37.9')
     assert s['forecasts'][0]['cohort'] == 'strategy' and s['research'] == []
     assert repo.detail('NO-SUCH-MARKET') == {}

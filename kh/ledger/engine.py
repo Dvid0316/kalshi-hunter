@@ -30,6 +30,7 @@ from .models import Fill, Settlement, CashTransaction, ZERO, ONE
 
 _CTX = decimal.Context(prec=60, rounding=decimal.ROUND_HALF_EVEN)
 TOLERANCE = Decimal('0.005')      # revenue cross-check tolerance (half a cent)
+CENT = Decimal('0.01')            # cent-level tolerance for recorded-cost cross-checks
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,7 @@ class MarketLedger:
     unrealized: Decimal | None = None
     unrealized_reason: str = ''
     mark_value: Decimal | None = None
+    sides: set = field(default_factory=set)      # sides ever traded; both => averages would mix YES and NO
 
     @property
     def avg_entry_price(self):
@@ -181,16 +183,17 @@ def compute(fills, settlements=(), cash=(), *, marks=None, now=None, mark_max_ag
     cash = list(cash)
     by_ticker: dict[str, list] = {}
     for f in sorted(fills, key=lambda x: (x.ts, x.seq)):
-        by_ticker.setdefault(f.ticker, []).append(f)
+        by_ticker.setdefault(f.ticker.upper(), []).append(f)
     settle: dict[str, list] = {}
     for s in settlements:
-        settle.setdefault(s.ticker, []).append(s)
+        settle.setdefault(s.ticker.upper(), []).append(s)
     markets, events, gflags = {}, [], []
     for t in sorted(set(by_ticker) | set(settle)):
         m = MarketLedger(ticker=t)
         pos = _Pos()
         for f in by_ticker.get(t, []):
             m.fees = c.add(m.fees, f.fee)
+            m.sides.add(f.side)
             m.first_ts = f.ts if m.first_ts is None else min(m.first_ts, f.ts)
             m.last_ts = f.ts if m.last_ts is None else max(m.last_ts, f.ts)
             if f.action == 'buy':
@@ -232,19 +235,27 @@ def compute(fills, settlements=(), cash=(), *, marks=None, now=None, mark_max_ag
         if sl:
             s = sorted(sl, key=lambda x: x.settled_ts)[-1]
             m.settled_ts, m.result, m.settlement_revenue = s.settled_ts, s.market_result, s.revenue
-            m.fees = c.add(m.fees, s.fee)
+            for x in sl:                                  # every settlement fee was really charged, even if the records conflict
+                m.fees = c.add(m.fees, x.fee)
             late = [f for f in by_ticker.get(t, []) if f.ts > s.settled_ts]
             if late:
-                m.flags.append(Flag('fill_after_settlement', 'warn', f'{len(late)} fill(s) are dated after settlement of {t}.'))
+                m.incomplete = True
+                m.flags.append(Flag('fill_after_settlement', 'error', f'{len(late)} fill(s) are dated after settlement of {t}: a timestamp is wrong or the settlement belongs to another position.'))
             if s.yes_total_cost is not None and s.no_total_cost is not None:
                 m.record_pnl = c.subtract(c.subtract(s.revenue, c.add(s.yes_total_cost, s.no_total_cost)), s.fee)
+                recorded_cost = c.add(s.yes_total_cost, s.no_total_cost)
+                if m.open_notional and abs(recorded_cost - m.open_notional) > CENT:
+                    m.flags.append(Flag('recorded_cost_mismatch', 'warn',
+                                        f'Settlement records ${recorded_cost} of cost for {t} while the fills total ${m.open_notional}: '
+                                        'one of the two is missing something.'))
             remaining, basis, side = pos.qty, pos.basis, pos.side
             if s.market_result in ('yes', 'no'):
                 derived = remaining if (remaining > 0 and side == s.market_result) else ZERO
                 if abs(derived - s.revenue) > TOLERANCE:
-                    m.flags.append(Flag('settlement_revenue_mismatch', 'warn',
-                                        f'Recorded revenue ${s.revenue} differs from the ${derived} implied by the fills for {t}. '
-                                        'The recorded revenue is used.'))
+                    m.incomplete = True
+                    m.flags.append(Flag('settlement_revenue_mismatch', 'error',
+                                        f'Recorded revenue ${s.revenue} differs from the ${derived} implied by the fills for {t}: fills are missing '
+                                        'or the amount/unit is wrong. No P&L is shown until it is corrected.'))
                 exp_yes = remaining if side == 'yes' else ZERO
                 exp_no = remaining if side == 'no' else ZERO
                 if (s.yes_count is not None and s.yes_count != exp_yes) or (s.no_count is not None and s.no_count != exp_no):
@@ -255,7 +266,17 @@ def compute(fills, settlements=(), cash=(), *, marks=None, now=None, mark_max_ag
             else:
                 m.flags.append(Flag('nonbinary_settlement', 'warn',
                                     f'{t} settled as {s.market_result!r}; P&L uses the recorded revenue. Review it manually.'))
-            if remaining == 0 and s.revenue > 0 and s.market_result in ('yes', 'no'):
+                if s.market_result == 'void' and remaining > 0 and s.revenue == ZERO:
+                    m.incomplete = True
+                    m.flags.append(Flag('void_settlement_without_refund', 'error',
+                                        f'{t} is recorded as voided with no payout although {remaining} contract(s) were held: '
+                                        'a void normally refunds cost, so the fills or the amount are wrong. No P&L is shown.'))
+                if remaining > 0 and s.revenue > remaining + TOLERANCE:
+                    m.incomplete = True
+                    m.flags.append(Flag('revenue_exceeds_position', 'error',
+                                        f'{t} ({s.market_result}) paid ${s.revenue} but the fills leave only {remaining} contract(s), '
+                                        f'which can pay at most ${remaining}: fills are missing or the amount is wrong.'))
+            if remaining == 0 and s.revenue > 0:
                 m.incomplete = True
                 m.flags.append(Flag('revenue_without_position', 'error',
                                     f'{t} paid ${s.revenue} at settlement but the fills leave no position: fills are missing.'))
@@ -308,6 +329,16 @@ def _mark(m: MarketLedger, mark, now, max_age):
         return
     if now is None or not (0 <= now - mark.ts <= max_age):
         m.unrealized_reason = 'Quote too old to mark'
+        return
+    quotes = [q for q in (mark.yes_bid, mark.yes_ask) if q is not None]
+    if any(not isinstance(q, Decimal) or not (ZERO <= q <= ONE) for q in quotes):
+        m.unrealized_reason = 'Invalid quote (must be Decimal dollars between 0 and 1)'
+        return
+    if any(q.as_tuple().exponent < -10 for q in quotes):
+        m.unrealized_reason = 'Invalid quote (binary float artifact, not an exact decimal price)'
+        return
+    if mark.yes_bid is not None and mark.yes_ask is not None and mark.yes_bid > mark.yes_ask:
+        m.unrealized_reason = 'Crossed quote'
         return
     bid = mark.yes_bid if m.side == 'yes' else (None if mark.yes_ask is None else ONE - mark.yes_ask)
     if bid is None:

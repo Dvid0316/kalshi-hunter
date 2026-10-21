@@ -17,6 +17,7 @@ import csv
 import hashlib
 import io
 import json
+from decimal import Decimal
 from pathlib import Path
 
 from . import models as M
@@ -37,7 +38,7 @@ def _rows(path: Path):
     sha = hashlib.sha256(raw).hexdigest()
     text = raw.decode('utf-8-sig', errors='replace')
     if str(path).lower().endswith('.json'):
-        data = json.loads(text)
+        data = json.loads(text, parse_float=Decimal)      # 0.40 in JSON is exact decimal text, not a binary float
         if isinstance(data, dict):
             data = data.get('records') or data.get('rows') or []
         if not isinstance(data, list):

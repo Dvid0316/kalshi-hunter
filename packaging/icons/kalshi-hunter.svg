@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Kalshi Hunter">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16293b"/>
+      <stop offset="1" stop-color="#08101a"/>
+    </linearGradient>
+    <linearGradient id="teal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7cf0de"/>
+      <stop offset="1" stop-color="#2fb9a6"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#bg)"/>
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="none" stroke="#34506b" stroke-width="6"/>
+  <!-- crosshair: the "hunter" -->
+  <circle cx="256" cy="256" r="196" fill="none" stroke="#55dcc8" stroke-opacity="0.28" stroke-width="10"/>
+  <g stroke="#55dcc8" stroke-opacity="0.45" stroke-width="10" stroke-linecap="round">
+    <path d="M256 36v52M256 424v52M36 256h52M424 256h52"/>
+  </g>
+  <!-- K as stem + rising arm + falling arm (price up / price down) -->
+  <rect x="150" y="146" width="58" height="220" rx="12" fill="url(#teal)"/>
+  <path d="M208 270 L318 146 H388 L268 282 Z" fill="url(#teal)"/>
+  <path d="M252 262 L388 366 H314 L214 290 Z" fill="#8eaaff"/>
+</svg>

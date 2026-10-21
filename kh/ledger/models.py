@@ -23,6 +23,8 @@ CASH_KINDS = ('deposit', 'withdrawal', 'adjustment', 'other')
 # 'kalshi_api' is reserved for a future, separately authorised read-only adapter. Nothing writes it today.
 SOURCES = ('manual', 'csv', 'json', 'sample', 'kalshi_api')
 _TICKER = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$')
+MAX_ABS = Decimal('1000000000000')           # anything larger is a unit mistake, not a trade
+EPOCH_MIN, EPOCH_MAX = 946684800.0, 4102444800.0   # 2000-01-01 .. 2100-01-01 (seconds)
 
 
 class LedgerError(ValueError):
@@ -33,18 +35,26 @@ def dec(value, field: str = 'value') -> Decimal:
     if value is None or isinstance(value, (bool, float)):
         raise LedgerError(f'{field}: must be given as text or integer, got {type(value).__name__}')
     if isinstance(value, str):
-        value = value.strip().replace(',', '').replace('$', '')
+        value = value.strip().replace('$', '')
+        if ',' in value:
+            if re.fullmatch(r'[+-]?\d{1,3}(,\d{3})+(\.\d+)?', value):
+                value = value.replace(',', '')            # unambiguous US thousands grouping, e.g. $1,250.50
+            else:
+                raise LedgerError(f'{field}: a comma is ambiguous (thousands separator or decimal comma). '
+                                  f'Use a dot for decimals, and commas only every three digits; got {value!r}')
     try:
         d = value if isinstance(value, Decimal) else Decimal(str(value))
     except InvalidOperation:
         raise LedgerError(f'{field}: not a number: {value!r}') from None
     if not d.is_finite():
         raise LedgerError(f'{field}: must be finite')
+    if abs(d) > MAX_ABS:
+        raise LedgerError(f'{field}: implausibly large ({d}); check the units')
     return d
 
 
 def ticker(value) -> str:
-    t = str(value or '').strip()
+    t = str(value or '').strip().upper()          # Kalshi tickers are upper-case; 'kxabc' and 'KXABC' are one market
     if not _TICKER.match(t):
         raise LedgerError(f'ticker: invalid market ticker {value!r}')
     return t
@@ -83,26 +93,35 @@ def choice(value, allowed, field):
 
 
 def timestamp(value, tz: str = 'America/Chicago') -> float:
-    """Epoch seconds. Accepts epoch numbers (as str/int) or ISO-8601. Naive ISO uses ``tz``."""
+    """Epoch SECONDS between 2000 and 2100. Accepts epoch numbers or ISO-8601 text; naive ISO uses ``tz``.
+    Millisecond epochs and other out-of-range values are rejected, never guessed at."""
     if value is None or isinstance(value, bool):
         raise LedgerError('ts: missing timestamp')
-    if isinstance(value, (int, Decimal)):
-        return float(value)
-    text = str(value).strip()
-    if re.fullmatch(r'\d{9,11}(\.\d+)?', text):
-        return float(text)
-    try:
-        dt = datetime.fromisoformat(text.replace('Z', '+00:00'))
-    except ValueError:
-        raise LedgerError(f'ts: unrecognised timestamp {value!r}') from None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=ZoneInfo(tz))
-    return dt.astimezone(timezone.utc).timestamp()
+    if isinstance(value, (int, float, Decimal)):
+        out = float(value)
+    else:
+        text = str(value).strip()
+        if re.fullmatch(r'\d+(\.\d+)?', text):
+            out = float(text)
+        else:
+            try:
+                dt = datetime.fromisoformat(text.replace('Z', '+00:00'))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=ZoneInfo(tz))
+                out = dt.astimezone(timezone.utc).timestamp()
+            except (ValueError, OverflowError, OSError):
+                raise LedgerError(f'ts: unrecognised timestamp {value!r}') from None
+    if not (EPOCH_MIN <= out <= EPOCH_MAX):
+        raise LedgerError(f'ts: {value!r} is outside 2000-2100. Epoch values must be in SECONDS '
+                          '(this looks like milliseconds or a typo)')
+    return out
 
 
 def s(d: Decimal) -> str:
     """Canonical text form stored in SQLite (exact, no exponent)."""
-    return format(d, 'f')
+    if d == 0:
+        return '0'
+    return format(d.normalize(), 'f')              # '0.40' == '0.4' == '.4'; never an exponent
 
 
 @dataclass(frozen=True)

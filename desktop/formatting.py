@@ -7,7 +7,7 @@ research snapshot are converted through ``Decimal(repr(x))`` so artefacts such a
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import Decimal, ROUND_HALF_EVEN, InvalidOperation
+from decimal import Decimal, ROUND_HALF_EVEN, InvalidOperation, localcontext
 from zoneinfo import ZoneInfo
 
 UNAVAILABLE = 'Unavailable'
@@ -57,7 +57,12 @@ def money(value, *, plus: bool = False) -> str:
     d = to_decimal(value)
     if d is None:
         return UNAVAILABLE
-    q = d.quantize(Decimal('0.01'), rounding=ROUND_HALF_EVEN)
+    try:
+        with localcontext() as ctx:
+            ctx.prec = 80                                  # an absurd amount must degrade to Unavailable, never crash a page
+            q = d.quantize(Decimal('0.01'), rounding=ROUND_HALF_EVEN)
+    except InvalidOperation:
+        return UNAVAILABLE
     sign = '-' if q < 0 else ('+' if plus and q > 0 else '')
     return f"{sign}${abs(q):,.2f}"
 
@@ -71,25 +76,34 @@ def quantity(value) -> str:
 
 def count(value) -> str:
     d = to_decimal(value)
-    return DASH if d is None else f'{int(d):,}'
+    return DASH if d is None else quantity(d)         # 2.5 contracts shows as 2.5, never truncated to 2
 
 
 def stamp(ts) -> str:
     if not ts:
         return UNAVAILABLE
-    return datetime.fromtimestamp(ts, CHICAGO).strftime('%b %d, %Y · %H:%M %Z')
+    try:
+        return datetime.fromtimestamp(ts, CHICAGO).strftime('%b %d, %Y · %H:%M %Z')
+    except (ValueError, OverflowError, OSError):
+        return UNAVAILABLE                                 # a corrupt timestamp must not take the page down
 
 
 def short_stamp(ts) -> str:
     if not ts:
         return DASH
-    return datetime.fromtimestamp(ts, CHICAGO).strftime('%b %d %H:%M')
+    try:
+        return datetime.fromtimestamp(ts, CHICAGO).strftime('%b %d %H:%M')
+    except (ValueError, OverflowError, OSError):
+        return DASH
 
 
 def clock(ts) -> str:
     if not ts:
         return DASH
-    return datetime.fromtimestamp(ts, CHICAGO).strftime('%H:%M')
+    try:
+        return datetime.fromtimestamp(ts, CHICAGO).strftime('%H:%M')
+    except (ValueError, OverflowError, OSError):
+        return DASH
 
 
 def age_text(seconds) -> str:

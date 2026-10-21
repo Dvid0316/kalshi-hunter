@@ -18,7 +18,7 @@ ScrollView {
         spacing: 14
         EmptyState { visible: !sv.d || !sv.d.ticker; Layout.fillWidth: true; Layout.preferredHeight: 200
                      heading: backend.ui.loading.indexOf("detail") >= 0 ? "Loading market…" : "Select a market"
-                     description: "Pick a row to see its executable quotes, settlement rules and linked research."
+                     description: "Pick a row to see its archived quotes, settlement rules and linked research."
                      busy: backend.ui.loading.indexOf("detail") >= 0 }
         ColumnLayout {
             visible: !!sv.d && !!sv.d.ticker

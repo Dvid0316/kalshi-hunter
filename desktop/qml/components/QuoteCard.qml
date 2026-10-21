@@ -18,7 +18,7 @@ Panel {
         spacing: 12
         RowLayout {
             Layout.fillWidth: true
-            Txt { text: "Executable quotes"; font.weight: Font.DemiBold; Layout.fillWidth: true }
+            Txt { text: card.quote && card.quote.executable ? "Executable quotes" : "Archived quotes · not executable"; font.weight: Font.DemiBold; Layout.fillWidth: true }
             Tag { visible: !!card.quote; label: card.quote ? card.quote.freshness : ""; tint: Theme.warn }
         }
         Small { visible: !card.quote; text: "No quote snapshot exists for this market."; Layout.fillWidth: true }
@@ -32,7 +32,7 @@ Panel {
             Small { text: "YES"; font.weight: Font.DemiBold; color: Theme.accent; Layout.fillWidth: true; Layout.preferredWidth: 100 }
             Small { text: "NO"; font.weight: Font.DemiBold; color: Theme.accent2; Layout.fillWidth: true; Layout.preferredWidth: 100 }
 
-            Column { Layout.preferredWidth: 96; Small { text: "BUY · you pay" ; font.pixelSize: Theme.fsXs } Small { text: "ask" ; font.pixelSize: Theme.fsXs } }
+            Column { Layout.preferredWidth: 96; Small { text: card.quote && card.quote.executable ? "BUY · you pay" : "BUY · ask at capture"; font.pixelSize: Theme.fsXs } Small { text: "ask" ; font.pixelSize: Theme.fsXs } }
             Column { Layout.fillWidth: true; Layout.preferredWidth: 100
                 Mono { text: card.quote ? card.quote.yes.ask : ""; font.pixelSize: Theme.fsLg; font.weight: Font.DemiBold; color: Theme.accent }
                 Small { text: card.quote ? "size " + card.quote.yes.ask_size : ""; font.pixelSize: Theme.fsXs } }
@@ -40,7 +40,7 @@ Panel {
                 Mono { text: card.quote ? card.quote.no.ask : ""; font.pixelSize: Theme.fsLg; font.weight: Font.DemiBold; color: Theme.accent2 }
                 Small { text: card.quote ? "size " + card.quote.no.ask_size : ""; font.pixelSize: Theme.fsXs } }
 
-            Column { Layout.preferredWidth: 96; Small { text: "SELL · you get"; font.pixelSize: Theme.fsXs } Small { text: "bid"; font.pixelSize: Theme.fsXs } }
+            Column { Layout.preferredWidth: 96; Small { text: card.quote && card.quote.executable ? "SELL · you get" : "SELL · bid at capture"; font.pixelSize: Theme.fsXs } Small { text: "bid"; font.pixelSize: Theme.fsXs } }
             Column { Layout.fillWidth: true; Layout.preferredWidth: 100
                 Mono { text: card.quote ? card.quote.yes.bid : ""; font.pixelSize: Theme.fsLg; font.weight: Font.DemiBold }
                 Small { text: card.quote ? "size " + card.quote.yes.bid_size : ""; font.pixelSize: Theme.fsXs } }

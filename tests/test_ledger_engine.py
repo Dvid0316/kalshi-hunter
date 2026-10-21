@@ -69,11 +69,16 @@ def test_netting_more_than_held_flips_into_the_other_side_and_splits_the_fee():
     assert m.realized == D('0.30') and m.cost_basis == D('5') * D('0.55') + D('0.10')
 
 
-def test_settlement_uses_recorded_revenue_but_flags_disagreement():
+def test_settlement_revenue_that_disagrees_with_the_fills_gives_no_pnl_not_a_confident_number():
+    """Design change after independent review: a recorded revenue that disagrees with the fills (missing fill, or
+    cents typed as dollars) makes the market INCOMPLETE. Both figures stay in the flag text for the owner."""
     r = E.compute([F(1, 'yes', 'buy', 10, '0.50', '0')], [S(result='yes', revenue='9', yes=10, no=0)])
     m = r.markets['T1']
-    assert m.realized == D('4.00')                      # 9 recorded - 5.00 cost
-    assert [f.code for f in m.flags] == ['settlement_revenue_mismatch'] and not m.incomplete
+    assert m.incomplete and m.realized is None and r.realized_total is None
+    assert [f.code for f in m.flags] == ['settlement_revenue_mismatch'] and m.flags[0].severity == 'error'
+    assert '$9' in m.flags[0].message and '$10' in m.flags[0].message
+    typo = E.compute([F(1, 'yes', 'buy', 10, '0.40', '0.10')], [S(result='yes', revenue='1000')]).markets['T1']
+    assert typo.incomplete and typo.realized is None, 'cents typed as dollars must never print +$995.90'
 
 
 def test_settlement_count_mismatch_makes_market_unavailable_not_estimated():
@@ -109,6 +114,7 @@ def test_nonbinary_and_late_fill_and_multiple_settlements_are_flagged():
                   [S(result='void', revenue='5', ts=1000)])
     codes = {f.code for f in r.markets['T1'].flags}
     assert {'nonbinary_settlement', 'fill_after_settlement'} <= codes
+    assert r.markets['T1'].incomplete and r.markets['T1'].realized is None, 'a fill dated after settlement makes the history unverifiable'
     r = E.compute([F(1, 'yes', 'buy', 1, '0.5')], [S(i='a', revenue='1', ts=10), S(i='b', revenue='1', ts=20)])
     assert r.markets['T1'].incomplete
 
