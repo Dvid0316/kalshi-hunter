@@ -149,3 +149,13 @@ def test_no_ordering_or_credential_surface_exists_in_qml_or_python():
 def test_account_actions_are_about_recording_not_trading():
     record = (QML / 'components' / 'RecordDialog.qml').read_text()
     assert 'never places an order' in record.lower() or 'does not place' in record.lower() or 'already executed' in record.lower()
+
+
+def test_every_document_the_ui_points_at_exists():
+    """The pages and importers cite docs/…md; a citation must never dangle."""
+    cited = set()
+    for f in list((ROOT / 'desktop').rglob('*.py')) + list((ROOT / 'desktop').rglob('*.qml')) + list((ROOT / 'kh').rglob('*.py')):
+        cited.update(re.findall(r'docs/([A-Z][A-Z_]*\.md)', f.read_text()))
+    assert cited, 'expected the UI to cite at least one document'
+    missing = sorted(name for name in cited if not (ROOT / 'docs' / name).exists())
+    assert missing == [], f'docs cited but missing: {missing}'
