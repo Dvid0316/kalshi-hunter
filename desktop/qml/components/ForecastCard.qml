@@ -37,7 +37,7 @@ Rectangle {
                 Txt { visible: fc.showTitle; Layout.fillWidth: true; text: fc.card.title || fc.card.ticker; font.weight: Font.DemiBold; font.pixelSize: Theme.fsMd - 1 }
                 Mono { Layout.fillWidth: true; text: fc.card.ticker || ""; color: Theme.muted; font.pixelSize: Theme.fsXs + 1 }
             }
-            Tag { label: (fc.card.side || "") + " paper entry"; tint: Theme.accent }
+            Tag { label: "Paper: buy " + (fc.card.side || "").toUpperCase(); tint: Theme.accent }
             Tag { label: fc.card.status || ""; tint: Theme.muted }
         }
         ProbBand {

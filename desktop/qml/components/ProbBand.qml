@@ -16,6 +16,7 @@ ColumnLayout {
     property real ask: -1
     property real breakEven: -1
     property bool showLegend: true
+    property bool showAxis: true
     spacing: 6
     Accessible.role: Accessible.StaticText
     Accessible.name: "Forecast " + Math.round(p * 100) + " percent, band " + Math.round(lo * 100) + " to " + Math.round(hi * 100) +
@@ -38,6 +39,7 @@ ColumnLayout {
         Rectangle { visible: band.breakEven >= 0; x: track.width * band.breakEven - 1; y: track.y - 8; width: 3; height: 30; color: Theme.warn }
     }
     RowLayout {
+        visible: band.showAxis
         Layout.fillWidth: true
         Small { text: "0%"; Layout.fillWidth: true; font.pixelSize: Theme.fsXs }
         Small { text: "50%"; font.pixelSize: Theme.fsXs }

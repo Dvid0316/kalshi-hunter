@@ -83,7 +83,7 @@ Item {
                         sortDesc: page.cand.sort === "edge"
                         columns: [
                             {key: "event", title: "Event", fill: true, sub: "kind", sortKey: "event"},
-                            {key: "edge", title: "Gross gap", width: 84, mono: true, align: "right", tone: "accent", sortKey: "edge"},
+                            {key: "edge", title: "Gross gap", width: 90, mono: true, align: "right", tone: "accent", sortKey: "edge"},
                             {key: "cost", title: "Cost", width: 70, mono: true, align: "right"},
                             {key: "n_legs", title: "Legs", width: 48, mono: true, align: "right"}
                         ]
@@ -124,7 +124,7 @@ Item {
                         Tag { label: page.selected ? page.selected.status.replace("_", " ") : ""; tint: Theme.warn }
                         Txt { text: page.selected ? page.selected.event : ""; font.pixelSize: Theme.fsLg; font.weight: Font.DemiBold; Layout.fillWidth: true }
                         Small { Layout.fillWidth: true; wrapMode: Text.WordWrap; elide: Text.ElideNone
-                                text: page.selected ? ("Buying YES on all " + page.selected.n_legs + " listed outcomes would cost " + page.selected.cost + " in total at the screened prices (a gross gap of " + page.selected.edge + " before fees and depth), and would pay $1 only if the outcome set is exhaustive and exactly one resolves YES. Neither is verified.") : "" }
+                                text: page.selected ? ("Buying YES on all " + page.selected.n_legs + " listed outcomes would cost " + page.selected.cost + " per set at the screened prices (a gross gap of " + page.selected.edge + " against the $1 payout, before fees and depth). It pays $1 only if the outcome set is exhaustive and exactly one resolves YES. Neither is verified.") : "" }
                         Small { text: "LEGS AT SCAN TIME"; font.pixelSize: Theme.fsXs; font.letterSpacing: 1 }
                         Repeater {
                             model: page.selected ? page.selected.legs : []

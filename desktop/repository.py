@@ -380,8 +380,8 @@ class Repository:
             for r in rows[:30]:
                 d = json.loads(r['detail'] or '{}')
                 legs = d.get('legs') or []
-                out.append(dict(id=r['id'], kind=r['kind'], event=r['event_ticker'], edge=percent(r['edge']),
-                                edge_raw=r['edge'], status=r['status'], n_legs=len(legs), cost=percent(d.get('cost')),
+                out.append(dict(id=r['id'], kind=r['kind'], event=r['event_ticker'], edge=cents(r['edge']),
+                                edge_raw=r['edge'], status=r['status'], n_legs=len(legs), cost=cents(d.get('cost')),
                                 needs_exhaustive=bool(d.get('needs_exhaustive')), when=stamp(r['ts']),
                                 legs=[dict(ticker=l[0], side=l[1], price=cents(l[2])) for l in legs if len(l) >= 3]))
             return dict(rows=out, total=total, more=len(rows) > 30, offset=offset, sort=sort)

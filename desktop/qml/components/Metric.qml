@@ -9,7 +9,7 @@ Panel {
     property string value: ""
     property string note: ""
     property color valueColor: Theme.ink
-    implicitHeight: 112
+    implicitHeight: 128
     implicitWidth: 200
     Accessible.role: Accessible.StaticText
     Accessible.name: label + ": " + value + ". " + note
@@ -25,6 +25,6 @@ Panel {
             font.pixelSize: metric.value.length > 13 ? 21 : 28
             font.weight: Font.DemiBold
         }
-        Small { text: metric.note; width: parent.width; font.pixelSize: Theme.fsXs; wrapMode: Text.NoWrap }
+        Small { text: metric.note; width: parent.width; font.pixelSize: Theme.fsXs; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight }
     }
 }

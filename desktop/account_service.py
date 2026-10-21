@@ -295,7 +295,8 @@ class AccountService:
         out = []
         for e in entries:
             link = cards.get(e['ticker']) if e['ticker'] else None
-            out.append(dict(e, when=stamp(e['created']), updated_text=stamp(e['updated']), edited=e['revisions'] > 1,
+            out.append(dict(e, type_label={'note': 'Note', 'pre_trade': 'Before trade', 'post_trade': 'After trade'}.get(e['entry_type'], e['entry_type']),
+                            when=stamp(e['created']), updated_text=stamp(e['updated']), edited=e['revisions'] > 1,
                             planned=(f"{e['planned_side'].upper()} @ {cents(to_decimal(e['planned_price']))}" if e['planned_side'] and e['planned_price'] else ''),
                             my_prob_text=(f"{Decimal(e['my_prob']) * 100:.0f}%" if e['my_prob'] else ''),
                             research_note=(f"Grok recorded {link['side'].upper()} · P(YES) {link['probability']} · {link['cohort_label']}" if link else '')))

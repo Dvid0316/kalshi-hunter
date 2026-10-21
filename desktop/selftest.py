@@ -139,7 +139,8 @@ class _Tester:
         self.click('nav_Markets'); self.settle()
         assert self.page() == 'Markets'; step('nav click')
         self.click('market_search')
-        QTest.keyClicks(self.window, 'CONTROL')
+        for ch in 'CONTROL':
+            QTest.keyClick(self.window, ch)
         self.wait_until(lambda: b.markets.get('search') == 'CONTROL' and self.idle(), 'search results')
         rows = b.markets['rows']
         assert rows and all('control' in (r['ticker'] + r['title'] + r['subtitle']).lower() for r in rows), 'search results must match the term'
@@ -156,17 +157,52 @@ class _Tester:
         assert self.page() == 'Research'; step('ctrl+3')
         self.key(Qt.Key_K, Qt.ControlModifier); self.settle()
         assert self.page() == 'Markets'; step('ctrl+k')
+        issues, audited = [], 0
         for n, page in enumerate(self.pages, start=1):
             self.click('nav_' + page); self.settle()
             assert self.page() == page, (page, self.page())
-        step('all pages via nav')
+            found, seen = self.a11y_audit()
+            issues += found
+            audited += seen
+        assert audited > 400, f'accessibility audit looked at only {audited} nodes: it is not inspecting the UI'
+        assert not issues, 'accessibility audit: ' + '; '.join(issues[:8])
+        step(f'all pages via nav + accessibility audit ({audited} nodes)')
+
+        # --- market filters, paging, keyboard paging
+        self.click('nav_Markets'); self.settle()
+        b.resetMarketFilters(); self.settle()
+        b.filterMarkets('scope', 'all'); self.settle()
+        b.filterMarkets('status', 'settled'); self.settle()
+        rows = b.markets['rows']
+        assert rows and all(r['status'] in ('determined', 'finalized') for r in rows), 'status filter must only return settled markets'
+        total_settled = b.markets['total']
+        b.filterMarkets('status', 'any'); self.settle()
+        assert b.markets['total'] >= total_settled; step('status filter')
+        before = b.markets['rows'][0]['ticker']
+        self.key(Qt.Key_Right, Qt.AltModifier); self.settle()
+        assert b.markets['page'] == 2 and b.markets['rows'][0]['ticker'] != before, 'Alt+Right must advance a page'
+        self.key(Qt.Key_Left, Qt.AltModifier); self.settle()
+        assert b.markets['page'] == 1 and b.markets['rows'][0]['ticker'] == before; step('keyboard paging')
+        b.resetMarketFilters(); self.settle()
+
+        # --- positions + journal (sample data only: the app is started with --sample-account)
+        if b.ui['sample']:
+            self.click('nav_Positions'); self.settle()
+            assert b.positions['summary']['open_count'] >= 1 and b.positions['rows'], 'sample open positions must show'
+            b.setPositionsTab('closed'); self.settle()
+            assert b.positions['tab'] == 'closed' and b.positions['rows'] and all('realized' in r for r in b.positions['rows'])
+            step('positions tabs')
+            self.click('nav_Journal'); self.settle()
+            n0 = len(b.journal['entries'])
+            b.saveJournal(0, 'Self-test entry', 'created by the interaction test', '', 'note', 'selftest', '', '', '')
+            self.wait_until(lambda: len(b.journal['entries']) == n0 + 1 and self.idle(), 'journal entry saved')
+            made = next(e for e in b.journal['entries'] if e['title'] == 'Self-test entry')
+            b.deleteJournal(made['id'])
+            self.wait_until(lambda: len(b.journal['entries']) == n0 and self.idle(), 'journal entry hidden'); step('journal save/delete')
         self.key(Qt.Key_F1)
         dialog = self.find_popup('shortcuts_dialog')
         assert dialog is not None and dialog.property('visible'), 'F1 must open the shortcuts help'
         self.key(Qt.Key_Escape); step('F1 help')
-        issues = self.a11y_audit()
-        assert not issues, 'accessibility audit: ' + '; '.join(issues[:8])
-        step('accessibility audit')
         return dict(interaction_test='passed', steps=steps, qml_warnings=[])
 
     def find_popup(self, name):
@@ -178,18 +214,25 @@ class _Tester:
         from PySide6.QtGui import QAccessible
         QAccessible.setActive(True)
         root = QAccessible.queryAccessibleInterface(self.window)
-        issues = []
+        issues, seen = [], [0]
         need_name = {QAccessible.Role.Button, QAccessible.Role.PushButton, QAccessible.Role.CheckBox, QAccessible.Role.ComboBox,
                      QAccessible.Role.EditableText, QAccessible.Role.RadioButton, QAccessible.Role.ListItem}
 
         def walk(node, depth=0):
             if node is None or depth > 40:
                 return
+            if node.state().invisible:                      # hidden items are not reachable by assistive tech
+                return
+            seen[0] += 1
             role = node.role()
             name = (node.text(QAccessible.Text.Name) or '').strip()
             if role in need_name and not name:
-                issues.append(f'{role.name} without accessible name (page {self.page()})')
+                obj = node.object()
+                where = ''
+                if obj is not None:
+                    where = f' [{obj.metaObject().className()} id={obj.objectName() or "-"} parent={obj.parent().metaObject().className() if obj.parent() else "-"}]'
+                issues.append(f'{role.name} without accessible name (page {self.page()}){where}')
             for i in range(node.childCount()):
                 walk(node.child(i), depth + 1)
         walk(root)
-        return issues
+        return issues, seen[0]

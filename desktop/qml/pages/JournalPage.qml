@@ -7,13 +7,14 @@ import "../components"
 // Your trading journal, and your decisions next to Grok's recorded research (descriptive, never a scorecard).
 Item {
     id: page
-    property bool fill: true
+    readonly property bool narrow: width < 1060
+    property bool fill: !narrow
     property int minHeight: 560
+    implicitHeight: narrow ? 1180 : 560
     property string view: "journal"
     readonly property var j: backend.journal
     readonly property var cmp: backend.comparison
     property int editId: 0
-    readonly property bool narrow: width < 1060
     property string statusText: ""
 
     function loadEntry(e) {
@@ -57,13 +58,15 @@ Item {
             GridLayout {
                 visible: page.view === "journal"
                 Layout.fillWidth: true
-                Layout.fillHeight: true
+                Layout.fillHeight: !page.narrow
+                Layout.alignment: Qt.AlignTop
                 columns: page.narrow ? 1 : 2
                 columnSpacing: Theme.gap
                 rowSpacing: Theme.gap
                 ColumnLayout {
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
+                    Layout.fillHeight: !page.narrow
+                    Layout.preferredHeight: page.narrow ? 300 : -1
                     Layout.preferredWidth: 420
                     spacing: 8
                     RowLayout {
@@ -81,14 +84,15 @@ Item {
                         emptyText: "No journal entries yet. Write one on the right."
                         busy: backend.ui.loading.indexOf("journal") >= 0
                         rows: page.j.entries || []
-                        columns: [{key: "title", title: "Entry", fill: true, sub: "when"}, {key: "entry_type", title: "Type", width: 84, tone: "muted", capitalize: true}]
+                        columns: [{key: "title", title: "Entry", fill: true, sub: "when"}, {key: "type_label", title: "Type", width: 100, tone: "muted"}]
                         onRowClicked: function (row) { page.loadEntry(row) }
                     }
                 }
                 ScrollView {
                     id: formScroll
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
+                    Layout.fillHeight: !page.narrow
+                    Layout.preferredHeight: page.narrow ? 640 : -1
                     Layout.preferredWidth: 520
                     contentWidth: availableWidth
                     clip: true

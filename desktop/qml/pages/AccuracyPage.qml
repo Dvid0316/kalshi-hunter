@@ -17,6 +17,7 @@ Item {
         property var c: ({})
         property color tint: Theme.accent
         Layout.fillWidth: true
+        Layout.alignment: Qt.AlignTop
         implicitHeight: cpCol.implicitHeight + 40
         ColumnLayout {
             id: cpCol
@@ -48,13 +49,19 @@ Item {
             Repeater {
                 model: cp.c.bands || []
                 delegate: ColumnLayout {
+                    id: bandRow
                     required property var modelData
+                    required property int index
                     Layout.fillWidth: true
                     spacing: 2
                     RowLayout { Layout.fillWidth: true
-                        Mono { text: modelData.ticker; Layout.fillWidth: true; font.pixelSize: Theme.fsXs + 1; elide: Text.ElideMiddle }
-                        Mono { text: Math.round(modelData.lo * 100) + "–" + Math.round(modelData.hi * 100) + "%  (est " + (modelData.p * 100).toFixed(1) + "%)"; font.pixelSize: Theme.fsXs + 1 } }
-                    ProbBand { Layout.fillWidth: true; lo: modelData.lo; hi: modelData.hi; p: modelData.p; showLegend: false }
+                        Mono { text: bandRow.modelData.ticker; Layout.fillWidth: true; font.pixelSize: Theme.fsXs + 1; elide: Text.ElideMiddle }
+                        Mono { font.pixelSize: Theme.fsXs + 1
+                               text: bandRow.modelData.hi > bandRow.modelData.lo
+                                     ? "band " + Math.round(bandRow.modelData.lo * 100) + "–" + Math.round(bandRow.modelData.hi * 100) + "%  ·  est " + (bandRow.modelData.p * 100).toFixed(1) + "%"
+                                     : "no band recorded  ·  est " + (bandRow.modelData.p * 100).toFixed(1) + "%" } }
+                    ProbBand { Layout.fillWidth: true; lo: bandRow.modelData.lo; hi: bandRow.modelData.hi; p: bandRow.modelData.p; showLegend: false
+                               showAxis: bandRow.index === (cp.c.bands || []).length - 1 }
                 }
             }
             Small { visible: (cp.c.reliability || []).length > 0; text: "RELIABILITY BY FORECAST BIN (tiny n: do not over-read)"; font.pixelSize: Theme.fsXs; font.letterSpacing: 1 }

@@ -170,10 +170,12 @@ ApplicationWindow {
         }
         Banner {
             kind: "sample"
-            text: ui.sample ? "SAMPLE DATA · These trades, settlements and journal entries are invented for demonstration. They are not your account and no figure here is real." : ""
+            dense: true
+            text: ui.sample ? "SAMPLE DATA · These trades, settlements and journal entries are invented for demonstration. They are not your account; no figure here is real." : ""
         }
         Banner {
             kind: "warn"
+            dense: true
             text: "Historical backtests are inconclusive. No trading advantage has been demonstrated. All quotes are archived, not live. You place every trade yourself."
         }
         Repeater {
