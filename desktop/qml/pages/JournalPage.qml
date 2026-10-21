@@ -162,17 +162,23 @@ Item {
                 Layout.fillHeight: true
                 spacing: 8
                 Banner { kind: "warn"; text: page.cmp.note || "" }
+                Check { id: onlyMine; text: "Only markets I traded or wrote about"; checked: true
+                        Accessible.name: "Show only markets where you traded or wrote a journal entry" }
                 EmptyState { visible: page.cmp.empty === true; Layout.fillWidth: true; Layout.preferredHeight: 160; heading: "Nothing to compare yet"
-                             description: "Record or import your trades. Markets where Grok recorded research and you also traded (or wrote a note) appear here." }
+                             description: "Record or import your trades. Markets where Grok recorded research and you also traded or wrote a note are compared here, side by side, never scored." }
                 DataTable {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     accessibleName: "Your decisions versus recorded research"
                     rowHeight: 62
                     keyField: "ticker"
-                    emptyText: "No market has both recorded research and your activity."
+                    emptyText: onlyMine.checked ? "None of the markets with recorded research has a trade or note from you yet." : "No researched markets."
                     busy: backend.ui.loading.indexOf("comparison") >= 0
-                    rows: page.cmp.rows || []
+                    rows: {
+                        var all = page.cmp.rows || []
+                        if (!onlyMine.checked) return all
+                        return all.filter(function (r) { return r.traded || (r.my_estimates && r.my_estimates.length) })
+                    }
                     columns: {
                         var c = [
                             {key: "ticker", title: "Market", fill: true, sub: "title"},

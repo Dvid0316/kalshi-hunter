@@ -19,6 +19,8 @@ from typing import Any
 from PySide6.QtCore import QObject, Property, Signal, Slot, QUrl
 from PySide6.QtGui import QGuiApplication, QDesktopServices
 
+from kh.ledger.models import LedgerError as M_LedgerError
+
 from . import settings as app_settings
 from .account_service import AccountService, AUTHORIZATION
 from .freshness import ConnectionState, STATE_TEXT
@@ -154,7 +156,10 @@ class Bridge(QObject):
         def done(f, kind=kind, n=n):
             try:
                 value = f.result()
-            except Exception as exc:                                # surfaced to the UI, logged with traceback
+            except M_LedgerError as exc:                            # expected, user-actionable: one line in the log, plain message in the UI
+                log.warning('request %s: %s', kind, exc)
+                value = {'__error__': str(exc)}
+            except Exception as exc:                                # unexpected: surfaced to the UI and logged with a traceback
                 log.error('request %s failed: %s\n%s', kind, exc, traceback.format_exc())
                 value = {'__error__': f'{type(exc).__name__}: {exc}'}
             if not self._ui.get('closing'):

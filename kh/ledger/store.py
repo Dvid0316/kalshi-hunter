@@ -115,25 +115,32 @@ class BatchResult:
 
 class AccountStore:
     def __init__(self, path):
-        self.path = _guard(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.c = sqlite3.connect(self.path, timeout=10)
-        self.c.row_factory = sqlite3.Row
-        self.c.execute('PRAGMA journal_mode=WAL')
-        self.c.execute('PRAGMA foreign_keys=ON')
-        self.c.executescript(_SCHEMA)
-        for t in _APPEND_ONLY:
-            for op in ('UPDATE', 'DELETE'):
-                self.c.execute(f"CREATE TRIGGER IF NOT EXISTS ro_{t}_{op.lower()} BEFORE {op} ON {t} "
-                               f"BEGIN SELECT RAISE(ABORT, '{t} is append-only'); END")
-        self.c.execute("INSERT OR IGNORE INTO meta VALUES('schema_version', ?)", (str(SCHEMA_VERSION),))
-        self.c.execute("INSERT OR IGNORE INTO meta VALUES('created', ?)", (str(time.time()),))
-        self.c.commit()
+        self.path = Path(path)
+        try:
+            self.path = _guard(path)                                    # raises StoreError (not caught below) for evidence paths
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.c = sqlite3.connect(self.path, timeout=10)
+            self.c.row_factory = sqlite3.Row
+            self.c.execute('PRAGMA journal_mode=WAL')
+            self.c.execute('PRAGMA foreign_keys=ON')
+            self.c.executescript(_SCHEMA)
+            for t in _APPEND_ONLY:
+                for op in ('UPDATE', 'DELETE'):
+                    self.c.execute(f"CREATE TRIGGER IF NOT EXISTS ro_{t}_{op.lower()} BEFORE {op} ON {t} "
+                                   f"BEGIN SELECT RAISE(ABORT, '{t} is append-only'); END")
+            self.c.execute("INSERT OR IGNORE INTO meta VALUES('schema_version', ?)", (str(SCHEMA_VERSION),))
+            self.c.execute("INSERT OR IGNORE INTO meta VALUES('created', ?)", (str(time.time()),))
+            self.c.commit()
+        except sqlite3.DatabaseError as exc:
+            self.close()
+            raise M.LedgerError(
+                f'The personal ledger file {path} cannot be opened ({exc}). It was not modified or replaced. '
+                'Restore it from a backup, or move it aside to start a new ledger. Nothing has been deleted.') from exc
 
     def close(self):
         try:
             self.c.close()
-        except sqlite3.Error:
+        except (AttributeError, sqlite3.Error):
             pass
 
     def __enter__(self):

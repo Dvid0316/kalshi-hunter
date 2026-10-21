@@ -17,7 +17,7 @@ QtObject {
     // text
     readonly property color ink: "#e7eef7"
     readonly property color muted: "#9aadc4"
-    readonly property color faint: "#8197b1"
+    readonly property color faint: "#90a5bd"
     // accents
     readonly property color accent: "#55dcc8"
     readonly property color accentBg: "#173c46"

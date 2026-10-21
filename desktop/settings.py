@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
 
 from . import paths
+
+log = logging.getLogger('kh.settings')
 
 DEFAULTS = {
     # Opening a source link launches the user's own browser. Off by default: copying a link never needs this.
@@ -25,8 +28,14 @@ def load() -> dict:
         raw = json.loads(_file().read_text())
         if isinstance(raw, dict):
             data.update({k: raw[k] for k in DEFAULTS if k in raw and isinstance(raw[k], type(DEFAULTS[k]))})
-    except (OSError, ValueError):
+    except FileNotFoundError:
         pass
+    except (OSError, ValueError) as exc:
+        log.warning('settings file unreadable (%s); using defaults and keeping a copy as settings.json.corrupt', exc)
+        try:
+            os.replace(_file(), _file().with_name('settings.json.corrupt'))      # keep the evidence, start clean
+        except OSError:
+            pass
     return data
 
 

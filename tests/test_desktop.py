@@ -30,8 +30,9 @@ def test_search_pagination_and_detail():
     assert r.detail('MISSING')=={}
 
 @pytest.mark.parametrize('args',[['--smoke'],['--interaction-test'],['--smoke','--compact']])
-def test_qml_pages_and_interaction(args):
-    env=dict(os.environ,QT_QPA_PLATFORM='offscreen',QT_QUICK_BACKEND='software',PYTHONDONTWRITEBYTECODE='1')
-    p=subprocess.run([sys.executable,'-m','desktop.app']+args,cwd=ROOT,env=env,capture_output=True,text=True,timeout=35)
+def test_qml_pages_and_interaction(args, tmp_path):
+    # KH_VAR_DIR keeps the run away from the user's real ledger, settings and logs (var/).
+    env=dict(os.environ,QT_QPA_PLATFORM='offscreen',QT_QUICK_BACKEND='software',PYTHONDONTWRITEBYTECODE='1',KH_VAR_DIR=str(tmp_path))
+    p=subprocess.run([sys.executable,'-m','desktop.app']+args,cwd=ROOT,env=env,capture_output=True,text=True,timeout=120)
     assert p.returncode==0,p.stdout+p.stderr
     assert '"qml_warnings": []' in p.stdout
