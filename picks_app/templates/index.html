@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="60">
+  <title>Kalshi Hunter Picks</title>
+  <style>
+    :root{color-scheme:dark;--bg:#10131b;--card:#1a2030;--muted:#aab4c8;--lime:#b8f36b;--line:#2c3548}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 50% -15%,#25304a,var(--bg) 55%);color:#f6f7fb;font:16px/1.5 system-ui,sans-serif}
+    main{max-width:760px;margin:auto;padding:28px 16px 40px}header{text-align:center;padding:18px 0 28px}h1{font-size:clamp(2rem,8vw,3rem);line-height:1.05;margin:0 0 12px}h2{font-size:1.35rem;margin:30px 0 12px}.disclaimer{color:var(--muted);font-size:.88rem}
+    .card,.empty,.track{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:19px;margin:12px 0;box-shadow:0 10px 30px #0002}.card h3{font-size:1.2rem;margin:0 0 10px}.buy{color:var(--lime);font-size:1.08rem;font-weight:750}.sub{color:var(--muted)}.numbers{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:16px 0}.number{background:#111722;padding:11px;border-radius:12px}.number b{display:block;font-size:1.15rem}.why{font-size:.92rem;margin:8px 0}.why strong{color:#d6e6ff}a{color:#9dc7ff;font-weight:650}.pass{padding:14px 16px;border-bottom:1px solid var(--line)}.pass:last-child{border:0}.pass h3{font-size:1rem;margin:0 0 4px}.empty{color:var(--muted);text-align:center;padding:25px}.track{font-size:.9rem;color:var(--muted)}.track strong{color:#fff}.metrics{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:8px}.metric{white-space:nowrap}@media(max-width:420px){main{padding:18px 12px 30px}.card{padding:16px}.numbers{gap:7px}.number{padding:9px}}
+  </style>
+</head>
+<body><main>
+<header><h1>Kalshi Hunter Picks 🎯</h1><div class="disclaimer">Paper-trading research. Not financial advice. Edge not yet proven.</div></header>
+<section><h2>🔥 Approved picks</h2>
+{% if picks %}{% for p in picks %}<article class="card">
+  <h3>YOOOO 👀 {{ p.title }}</h3>
+  <div class="buy">Buy {{ p.side|upper }} at {{ '%.0f'|format(p.exec_price*100) }}¢. We estimate {{ '%.0f'|format(p.p_win*100) }}% chance it wins.</div>
+  <p>If it hits, estimated net profit is {{ '%.1f'|format(p.profit_if_win*100) }}¢ per contract (about ${{ '%.2f'|format(p.profit_if_win*(p.qty or 10)) }} on {{ p.contracts }}), after estimated fees.</p>
+  <div class="numbers"><div class="number">Estimated edge<b>{{ '%+.1f'|format(p.ev*100) }}¢ / contract</b></div><div class="number">Worst-case estimate<b>{{ '%+.1f'|format(p.ev_worst*100) }}¢ / contract</b></div><div class="number">Available at review<b>{{ p.contracts }} contracts</b></div><div class="number">Expected settlement<b>{{ p.settles }}</b></div></div>
+  <div class="why"><strong>Why for:</strong> {{ p.why_for }}</div><div class="why"><strong>Why against:</strong> {{ p.why_against }}</div>
+  <a href="https://kalshi.com/markets/{{ p.ticker|lower }}" target="_blank" rel="noopener">View market on Kalshi ↗</a>
+</article>{% endfor %}{% else %}<div class="empty">nothing hot right now 😴</div>{% endif %}</section>
+<section><h2>🤔 Looked at, passed</h2>
+{% if passed %}<div class="card">{% for p in passed %}<article class="pass"><h3>{{ p.title }}</h3><div class="sub">{{ p.reason }}</div><a href="{{ p.market_url }}" target="_blank" rel="noopener">Market ↗</a></article>{% endfor %}</div>{% else %}<div class="empty">No recent passes to show.</div>{% endif %}</section>
+<footer class="track"><strong>Paper track record · research forecasts</strong><div class="metrics"><span class="metric">Resolved: <strong>{{ stats.n }}</strong></span><span class="metric">Win rate: <strong>{% if stats.win_rate is not none %}{{ '%.1f'|format(stats.win_rate*100) }}%{% else %}—{% endif %}</strong></span><span class="metric">Paper P&amp;L: <strong>${{ '%+.2f'|format(stats.pnl) }}</strong></span><span class="metric">Market Brier: <strong>{% if stats.brier_market is not none %}{{ '%.3f'|format(stats.brier_market) }}{% else %}—{% endif %}</strong></span></div><div>Market Brier sample: {{ stats.brier_n }} matched resolved forecasts. Resolved sample: {{ stats.n }}. Estimates only; not proof of an edge.</div></footer>
+</main></body></html>
